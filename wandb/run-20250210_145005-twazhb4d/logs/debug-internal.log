@@ -1,0 +1,9 @@
+{"time":"2025-02-10T14:50:05.244240694Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-10T14:50:05.244282505Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250210_145005-twazhb4d/logs/debug-core.log"}
+{"time":"2025-02-10T14:50:05.358856233Z","level":"INFO","msg":"created new stream","id":"twazhb4d"}
+{"time":"2025-02-10T14:50:05.358935371Z","level":"INFO","msg":"stream: started","id":"twazhb4d"}
+{"time":"2025-02-10T14:50:05.359032755Z","level":"INFO","msg":"sender: started","stream_id":"twazhb4d"}
+{"time":"2025-02-10T14:50:05.358977454Z","level":"INFO","msg":"handler: started","stream_id":{"value":"twazhb4d"}}
+{"time":"2025-02-10T14:50:05.358969416Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"twazhb4d"}}
+{"time":"2025-02-10T14:50:05.683375454Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-02-10T14:53:27.151418899Z","level":"INFO","msg":"api: retrying HTTP error","status":500,"url":"https://api.wandb.ai/files/iccv25/hgnode_debug/twazhb4d/file_stream"}

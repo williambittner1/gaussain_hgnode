@@ -1,0 +1,6 @@
+Reading Transforms
+Loading Training Cameras
+Gaussians loaded from checkpoint.
+logged debug video at epoch 0
+[1;34mwandb[0m: 🚀 View run [33mhandsome-quiver-42[0m at: [34mhttps://wandb.ai/iccv25/debugging/runs/3y8grecf[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20250215_004253-3y8grecf/logs[0m

@@ -1,0 +1,16 @@
+{"time":"2025-02-09T23:32:19.13870013Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-09T23:32:19.138739766Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250209_233219-223o3eew/logs/debug-core.log"}
+{"time":"2025-02-09T23:32:19.248693576Z","level":"INFO","msg":"created new stream","id":"223o3eew"}
+{"time":"2025-02-09T23:32:19.248743637Z","level":"INFO","msg":"stream: started","id":"223o3eew"}
+{"time":"2025-02-09T23:32:19.248882749Z","level":"INFO","msg":"sender: started","stream_id":"223o3eew"}
+{"time":"2025-02-09T23:32:19.248822421Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"223o3eew"}}
+{"time":"2025-02-09T23:32:19.248829125Z","level":"INFO","msg":"handler: started","stream_id":{"value":"223o3eew"}}
+{"time":"2025-02-09T23:32:19.672770139Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-02-09T23:32:22.421670811Z","level":"INFO","msg":"stream: closing","id":"223o3eew"}
+{"time":"2025-02-09T23:32:22.42169882Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-02-09T23:32:22.422559234Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-02-09T23:32:24.540849333Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-02-09T23:32:24.724942446Z","level":"INFO","msg":"handler: closed","stream_id":{"value":"223o3eew"}}
+{"time":"2025-02-09T23:32:24.725005732Z","level":"INFO","msg":"sender: closed","stream_id":"223o3eew"}
+{"time":"2025-02-09T23:32:24.724984324Z","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"223o3eew"}}
+{"time":"2025-02-09T23:32:24.776560709Z","level":"INFO","msg":"stream: closed","id":"223o3eew"}

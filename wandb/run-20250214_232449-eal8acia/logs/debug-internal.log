@@ -1,0 +1,8 @@
+{"time":"2025-02-14T23:24:49.301373759Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-14T23:24:49.301398022Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250214_232449-eal8acia/logs/debug-core.log"}
+{"time":"2025-02-14T23:24:49.412512441Z","level":"INFO","msg":"created new stream","id":"eal8acia"}
+{"time":"2025-02-14T23:24:49.412572622Z","level":"INFO","msg":"stream: started","id":"eal8acia"}
+{"time":"2025-02-14T23:24:49.412672117Z","level":"INFO","msg":"sender: started","stream_id":"eal8acia"}
+{"time":"2025-02-14T23:24:49.412606749Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"eal8acia"}}
+{"time":"2025-02-14T23:24:49.412716119Z","level":"INFO","msg":"handler: started","stream_id":{"value":"eal8acia"}}
+{"time":"2025-02-14T23:24:49.778212589Z","level":"INFO","msg":"Starting system monitor"}

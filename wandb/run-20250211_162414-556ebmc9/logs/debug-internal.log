@@ -1,0 +1,7 @@
+{"time":"2025-02-11T16:24:14.967222728Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-11T16:24:14.967270159Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250211_162414-556ebmc9/logs/debug-core.log"}
+{"time":"2025-02-11T16:24:15.083643509Z","level":"INFO","msg":"created new stream","id":"556ebmc9"}
+{"time":"2025-02-11T16:24:15.083727314Z","level":"INFO","msg":"stream: started","id":"556ebmc9"}
+{"time":"2025-02-11T16:24:15.083805074Z","level":"INFO","msg":"sender: started","stream_id":"556ebmc9"}
+{"time":"2025-02-11T16:24:15.083782879Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"556ebmc9"}}
+{"time":"2025-02-11T16:24:15.083845356Z","level":"INFO","msg":"handler: started","stream_id":{"value":"556ebmc9"}}

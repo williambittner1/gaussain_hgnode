@@ -1,0 +1,3 @@
+/users/williamb/dev/gaussain_hgnode/scene/__init__.py:13: RuntimeWarning: invalid value encountered in divide
+  forward = forward / np.linalg.norm(forward)
+Number of Gaussians: 1

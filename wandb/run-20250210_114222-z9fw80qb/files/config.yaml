@@ -1,0 +1,75 @@
+_wandb:
+    value:
+        cli_version: 0.18.5
+        m: []
+        python_version: 3.8.20
+        t:
+            "1":
+                - 1
+                - 5
+                - 41
+                - 53
+                - 55
+            "2":
+                - 1
+                - 5
+                - 41
+                - 53
+                - 55
+            "3":
+                - 13
+                - 19
+                - 23
+                - 55
+            "4": 3.8.20
+            "5": 0.18.5
+            "8":
+                - 5
+            "12": 0.18.5
+            "13": linux-x86_64
+batch_size:
+    value: 2
+device:
+    value: cuda
+dynamics_type:
+    value: double_pendulum_cartesian_rigid
+eval_duration:
+    value: 1
+eval_iter:
+    value: 10
+eval_samples_per_second:
+    value: 10
+learning_rate:
+    value: 0.005
+loss_threshold:
+    value: 5e-05
+num_epochs:
+    value: 300000
+num_initial_train_time_samples:
+    value: 5
+num_samples_eval:
+    value: 10
+num_test_data_sequences:
+    value: 1
+num_time_samples_test:
+    value: 10
+num_time_samples_train:
+    value: 10
+num_train_data_sequences:
+    value: 2
+stride:
+    value: 10
+test_duration:
+    value: 1
+test_samples_per_second:
+    value: 10
+train_duration:
+    value: 1
+train_samples_per_second:
+    value: 10
+train_samples_step:
+    value: 1
+use_all_segments:
+    value: false
+viz_iter:
+    value: 1000

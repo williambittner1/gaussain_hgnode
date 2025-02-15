@@ -1,0 +1,8 @@
+{"time":"2025-02-15T00:32:49.500778619Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-15T00:32:49.500809442Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250215_003249-x2b50psk/logs/debug-core.log"}
+{"time":"2025-02-15T00:32:49.713401986Z","level":"INFO","msg":"created new stream","id":"x2b50psk"}
+{"time":"2025-02-15T00:32:49.713464599Z","level":"INFO","msg":"stream: started","id":"x2b50psk"}
+{"time":"2025-02-15T00:32:49.713543002Z","level":"INFO","msg":"sender: started","stream_id":"x2b50psk"}
+{"time":"2025-02-15T00:32:49.713517498Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"x2b50psk"}}
+{"time":"2025-02-15T00:32:49.713568694Z","level":"INFO","msg":"handler: started","stream_id":{"value":"x2b50psk"}}
+{"time":"2025-02-15T00:32:50.043441501Z","level":"INFO","msg":"Starting system monitor"}

@@ -1,0 +1,8 @@
+{"time":"2025-02-10T12:48:55.893301482Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-10T12:48:55.893338804Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250210_124855-fdkkteru/logs/debug-core.log"}
+{"time":"2025-02-10T12:48:56.007586712Z","level":"INFO","msg":"created new stream","id":"fdkkteru"}
+{"time":"2025-02-10T12:48:56.007670667Z","level":"INFO","msg":"stream: started","id":"fdkkteru"}
+{"time":"2025-02-10T12:48:56.007757465Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"fdkkteru"}}
+{"time":"2025-02-10T12:48:56.007831533Z","level":"INFO","msg":"sender: started","stream_id":"fdkkteru"}
+{"time":"2025-02-10T12:48:56.007767613Z","level":"INFO","msg":"handler: started","stream_id":{"value":"fdkkteru"}}
+{"time":"2025-02-10T12:48:56.307122227Z","level":"INFO","msg":"Starting system monitor"}

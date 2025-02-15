@@ -1,0 +1,8 @@
+{"time":"2025-02-10T15:15:40.450142439Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-10T15:15:40.450186301Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250210_151540-pamjduwh/logs/debug-core.log"}
+{"time":"2025-02-10T15:15:40.565013263Z","level":"INFO","msg":"created new stream","id":"pamjduwh"}
+{"time":"2025-02-10T15:15:40.565072161Z","level":"INFO","msg":"stream: started","id":"pamjduwh"}
+{"time":"2025-02-10T15:15:40.565156325Z","level":"INFO","msg":"sender: started","stream_id":"pamjduwh"}
+{"time":"2025-02-10T15:15:40.565130653Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"pamjduwh"}}
+{"time":"2025-02-10T15:15:40.565205632Z","level":"INFO","msg":"handler: started","stream_id":{"value":"pamjduwh"}}
+{"time":"2025-02-10T15:15:40.94317898Z","level":"INFO","msg":"Starting system monitor"}

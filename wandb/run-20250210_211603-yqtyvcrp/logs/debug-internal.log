@@ -1,0 +1,18 @@
+{"time":"2025-02-10T21:16:05.269759434Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-10T21:16:05.269808176Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250210_211603-yqtyvcrp/logs/debug-core.log"}
+{"time":"2025-02-10T21:16:05.454747069Z","level":"INFO","msg":"created new stream","id":"yqtyvcrp"}
+{"time":"2025-02-10T21:16:05.454822875Z","level":"INFO","msg":"stream: started","id":"yqtyvcrp"}
+{"time":"2025-02-10T21:16:05.454932446Z","level":"INFO","msg":"sender: started","stream_id":"yqtyvcrp"}
+{"time":"2025-02-10T21:16:05.454855844Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"yqtyvcrp"}}
+{"time":"2025-02-10T21:16:05.454945796Z","level":"INFO","msg":"handler: started","stream_id":{"value":"yqtyvcrp"}}
+{"time":"2025-02-10T21:16:06.486767107Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-02-10T21:16:50.621585237Z","level":"INFO","msg":"stream: closing","id":"yqtyvcrp"}
+{"time":"2025-02-10T21:16:50.621681242Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-02-10T21:16:50.636861462Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-02-10T21:16:51.053266664Z","level":"WARN","msg":"No program path found, not creating job artifact. See https://docs.wandb.ai/guides/launch/create-job"}
+{"time":"2025-02-10T21:16:51.05330623Z","level":"INFO","msg":"sender: sendDefer: no job artifact to save"}
+{"time":"2025-02-10T21:16:51.514891122Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-02-10T21:16:51.678648868Z","level":"INFO","msg":"handler: closed","stream_id":{"value":"yqtyvcrp"}}
+{"time":"2025-02-10T21:16:51.678738976Z","level":"INFO","msg":"sender: closed","stream_id":"yqtyvcrp"}
+{"time":"2025-02-10T21:16:51.678727185Z","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"yqtyvcrp"}}
+{"time":"2025-02-10T21:16:51.767271673Z","level":"INFO","msg":"stream: closed","id":"yqtyvcrp"}

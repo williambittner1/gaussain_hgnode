@@ -1,0 +1,19 @@
+Reading Transforms
+Loading Training Cameras
+/users/williamb/dev/gaussain_hgnode/scene/__init__.py:54: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  model_params = torch.load(checkpoint_path)
+Gaussians loaded from checkpoint.
+/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/sklearn/cluster/_kmeans.py:1416: FutureWarning: The default value of `n_init` will change from 10 to 'auto' in 1.4. Set the value of `n_init` explicitly to suppress the warning
+  super()._check_params_vs_input(X, default_n_init=10)
+/users/williamb/dev/gaussain_hgnode/scene/gaussian_model_new.py:107: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /opt/conda/conda-bld/pytorch_1724789115405/work/torch/csrc/utils/tensor_new.cpp:278.)
+  self.cluster_control_points = torch.tensor(cluster_control_points, device=self.device, dtype=self.get_xyz.dtype)
+Training:   8%|████▎                                              | 847/10000 [54:50<11:20:42,  4.46s/it, Loss=0.0006036]
+logged debug video at epoch 0
+logged debug video at epoch 100
+logged debug video at epoch 200
+logged debug video at epoch 300
+logged debug video at epoch 400
+logged debug video at epoch 500
+logged debug video at epoch 600
+logged debug video at epoch 700
+logged debug video at epoch 800

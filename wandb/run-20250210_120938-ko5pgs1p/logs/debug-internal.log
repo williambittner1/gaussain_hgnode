@@ -1,0 +1,18 @@
+{"time":"2025-02-10T12:09:38.928401789Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-10T12:09:38.928440148Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250210_120938-ko5pgs1p/logs/debug-core.log"}
+{"time":"2025-02-10T12:09:39.041494361Z","level":"INFO","msg":"created new stream","id":"ko5pgs1p"}
+{"time":"2025-02-10T12:09:39.041562177Z","level":"INFO","msg":"stream: started","id":"ko5pgs1p"}
+{"time":"2025-02-10T12:09:39.041650128Z","level":"INFO","msg":"sender: started","stream_id":"ko5pgs1p"}
+{"time":"2025-02-10T12:09:39.041596449Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"ko5pgs1p"}}
+{"time":"2025-02-10T12:09:39.041696803Z","level":"INFO","msg":"handler: started","stream_id":{"value":"ko5pgs1p"}}
+{"time":"2025-02-10T12:09:39.37583165Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-02-10T12:09:55.082838255Z","level":"INFO","msg":"stream: closing","id":"ko5pgs1p"}
+{"time":"2025-02-10T12:09:55.082953738Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-02-10T12:09:55.084703669Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-02-10T12:09:55.235160297Z","level":"WARN","msg":"No program path found, not creating job artifact. See https://docs.wandb.ai/guides/launch/create-job"}
+{"time":"2025-02-10T12:09:55.235193596Z","level":"INFO","msg":"sender: sendDefer: no job artifact to save"}
+{"time":"2025-02-10T12:09:55.630245457Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-02-10T12:09:55.946726127Z","level":"INFO","msg":"handler: closed","stream_id":{"value":"ko5pgs1p"}}
+{"time":"2025-02-10T12:09:55.946791025Z","level":"INFO","msg":"sender: closed","stream_id":"ko5pgs1p"}
+{"time":"2025-02-10T12:09:55.946783407Z","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"ko5pgs1p"}}
+{"time":"2025-02-10T12:09:55.949059058Z","level":"INFO","msg":"stream: closed","id":"ko5pgs1p"}

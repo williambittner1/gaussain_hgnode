@@ -1,0 +1,5 @@
+Reading Transforms
+Generating random point cloud (10000)...
+Loading Training Cameras
+/users/williamb/dev/gaussain_hgnode/scene/__init__.py:17: RuntimeWarning: invalid value encountered in divide
+  forward = forward / np.linalg.norm(forward)

@@ -1,0 +1,5 @@
+Reading Transforms
+Loading Training Cameras
+Number of points at initialisation :  75000
+Gaussians initialized from scene information.
+Training: 100%|████████████████████████████████████████████████████████| 500/500 [00:12<00:00, 39.38it/s, Loss=0.0003266]

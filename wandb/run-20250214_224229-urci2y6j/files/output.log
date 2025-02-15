@@ -1,0 +1,6 @@
+Reading Transforms
+Loading Training Cameras
+Number of points at initialisation :  75000
+Gaussians initialized from scene information.
+Training:   0%|                                                                                | 0/20000 [00:00<?, ?it/s]
+Logged render and gt for camera 0 at iteration 0

@@ -1,0 +1,45 @@
+2025-02-14 17:29:54,322 INFO    MainThread:1837009 [wandb_setup.py:_flush():79] Current SDK version is 0.18.5
+2025-02-14 17:29:54,323 INFO    MainThread:1837009 [wandb_setup.py:_flush():79] Configure stats pid to 1837009
+2025-02-14 17:29:54,324 INFO    MainThread:1837009 [wandb_setup.py:_flush():79] Loading settings from /users/williamb/.config/wandb/settings
+2025-02-14 17:29:54,324 INFO    MainThread:1837009 [wandb_setup.py:_flush():79] Loading settings from /athenahomes/williamb/dev/gaussain_hgnode/wandb/settings
+2025-02-14 17:29:54,325 INFO    MainThread:1837009 [wandb_setup.py:_flush():79] Loading settings from environment variables: {}
+2025-02-14 17:29:54,325 INFO    MainThread:1837009 [wandb_setup.py:_flush():79] Applying setup settings: {'mode': None, '_disable_service': None}
+2025-02-14 17:29:54,326 WARNING MainThread:1837009 [wandb_setup.py:_flush():79] Could not save program above cwd: /users/williamb/dev/gaussain_hgnode/train.py
+2025-02-14 17:29:54,327 INFO    MainThread:1837009 [wandb_setup.py:_flush():79] Inferring run settings from compute environment: {'program_relpath': None, 'program_abspath': '/users/williamb/dev/gaussain_hgnode/train.py', 'program': '/users/williamb/dev/gaussain_hgnode/train.py'}
+2025-02-14 17:29:54,327 INFO    MainThread:1837009 [wandb_setup.py:_flush():79] Applying login settings: {}
+2025-02-14 17:29:54,328 INFO    MainThread:1837009 [wandb_init.py:_log_setup():534] Logging user logs to /athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250214_172954-i6uklqw9/logs/debug.log
+2025-02-14 17:29:54,329 INFO    MainThread:1837009 [wandb_init.py:_log_setup():535] Logging internal logs to /athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250214_172954-i6uklqw9/logs/debug-internal.log
+2025-02-14 17:29:54,330 INFO    MainThread:1837009 [wandb_init.py:init():621] calling init triggers
+2025-02-14 17:29:54,331 INFO    MainThread:1837009 [wandb_init.py:init():628] wandb.init called with sweep_config: {}
+config: {'experiment': ExperimentConfig(device=device(type='cuda'), learning_rate=0.005, num_epochs=300000, viz_iter=1000, eval_iter=10, train_duration=1.0, test_duration=1.0, eval_duration=1.0, train_samples_per_second=10, test_samples_per_second=10, eval_samples_per_second=10, num_time_samples_train=10, num_time_samples_test=10, num_samples_eval=10, num_initial_train_time_samples=5, train_samples_step=1, loss_threshold=5e-05, num_train_data_sequences=2, num_test_data_sequences=1, batch_size=2, use_all_segments=False, stride=10, dynamics_type='double_pendulum_cartesian_rigid', data_device=device(type='cuda'), data_path='data/doublependulum30cams'), 'optimization': OptimizationConfig(iterations=30000, total_timesteps=100, initial_timesteps=5, framerate=25, ode_iterations=50000, position_lr_init=0.00016, position_lr_final=1.6e-06, position_lr_delay_mult=0.01, position_lr_max_steps=30000, feature_lr=0.0025, opacity_lr=0.05, scaling_lr=0.005, rotation_lr=0.001, semantic_feature_lr=0.001, percent_dense=0.01, lambda_dssim=0.2, densification_interval=100, opacity_reset_interval=3000, densify_from_iter=500, densify_until_iter=1000, densify_grad_threshold=0.0002, load_existing_gaussians=True), 'model': ModelConfig(sh_degree=3, exp_name='doublependulum30cams', data_path='data/doublependulum30cams', source_path='data/doublependulum30cams', output_path='output/doublependulum30cams', foundation_model='', checkpoint_path='output/doublependulum30cams', model_path='', images='images', resolution=-1, white_background=False, data_device='cuda', eval=False, speedup=False, render_items=['RGB', 'Depth', 'Edge', 'Normal', 'Curvature', 'Feature Map'], manual_gaussians_bool=False), 'pipeline': PipelineConfig(convert_SHs_python=False, compute_cov3D_python=False, debug=True)}
+2025-02-14 17:29:54,332 INFO    MainThread:1837009 [wandb_init.py:init():671] starting backend
+2025-02-14 17:29:54,332 INFO    MainThread:1837009 [wandb_init.py:init():675] sending inform_init request
+2025-02-14 17:29:54,340 INFO    MainThread:1837009 [backend.py:_multiprocessing_setup():104] multiprocessing start_methods=fork,spawn,forkserver, using: spawn
+2025-02-14 17:29:54,342 INFO    MainThread:1837009 [wandb_init.py:init():688] backend started and connected
+2025-02-14 17:29:54,356 INFO    MainThread:1837009 [wandb_init.py:init():783] updated telemetry
+2025-02-14 17:29:54,437 INFO    MainThread:1837009 [wandb_init.py:init():816] communicating run to backend with 90.0 second timeout
+2025-02-14 17:29:54,438 ERROR   MainThread:1837009 [wandb_init.py:init():1266] error in wandb.init()
+Traceback (most recent call last):
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/wandb/sdk/wandb_init.py", line 1256, in init
+    return wi.init()
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/wandb/sdk/wandb_init.py", line 818, in init
+    run_init_handle = backend.interface.deliver_run(run)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/wandb/sdk/interface/interface.py", line 845, in deliver_run
+    run_record = self._make_run(run)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/wandb/sdk/interface/interface.py", line 157, in _make_run
+    self._make_config(data=config_dict, obj=proto_run.config)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/wandb/sdk/interface/interface.py", line 139, in _make_config
+    update.value_json = json_dumps_safer(json_friendly(v)[0])
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/wandb/util.py", line 831, in json_dumps_safer
+    return dumps(obj, cls=WandBJSONEncoder, **kwargs)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/json/__init__.py", line 234, in dumps
+    return cls(
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/json/encoder.py", line 199, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/json/encoder.py", line 257, in iterencode
+    return _iterencode(o, 0)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/wandb/util.py", line 782, in default
+    return json.JSONEncoder.default(self, obj)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/json/encoder.py", line 179, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+TypeError: Object of type device is not JSON serializable

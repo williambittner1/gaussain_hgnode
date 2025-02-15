@@ -1,0 +1,18 @@
+{"time":"2025-02-10T19:09:43.264230964Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-10T19:09:43.264273214Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250210_190943-tyksnglx/logs/debug-core.log"}
+{"time":"2025-02-10T19:09:43.3746347Z","level":"INFO","msg":"created new stream","id":"tyksnglx"}
+{"time":"2025-02-10T19:09:43.374685135Z","level":"INFO","msg":"stream: started","id":"tyksnglx"}
+{"time":"2025-02-10T19:09:43.374763953Z","level":"INFO","msg":"sender: started","stream_id":"tyksnglx"}
+{"time":"2025-02-10T19:09:43.374736811Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"tyksnglx"}}
+{"time":"2025-02-10T19:09:43.374906476Z","level":"INFO","msg":"handler: started","stream_id":{"value":"tyksnglx"}}
+{"time":"2025-02-10T19:09:43.758435635Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-02-10T19:09:48.485841015Z","level":"INFO","msg":"stream: closing","id":"tyksnglx"}
+{"time":"2025-02-10T19:09:48.485948454Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-02-10T19:09:48.488468427Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-02-10T19:09:48.660935943Z","level":"WARN","msg":"No program path found, not creating job artifact. See https://docs.wandb.ai/guides/launch/create-job"}
+{"time":"2025-02-10T19:09:48.660980849Z","level":"INFO","msg":"sender: sendDefer: no job artifact to save"}
+{"time":"2025-02-10T19:09:49.035356483Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-02-10T19:09:49.217179476Z","level":"INFO","msg":"handler: closed","stream_id":{"value":"tyksnglx"}}
+{"time":"2025-02-10T19:09:49.217251844Z","level":"INFO","msg":"sender: closed","stream_id":"tyksnglx"}
+{"time":"2025-02-10T19:09:49.2172389Z","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"tyksnglx"}}
+{"time":"2025-02-10T19:09:49.232741543Z","level":"INFO","msg":"stream: closed","id":"tyksnglx"}

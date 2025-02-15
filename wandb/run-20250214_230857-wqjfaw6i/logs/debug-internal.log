@@ -1,0 +1,8 @@
+{"time":"2025-02-14T23:08:57.556763073Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-14T23:08:57.556804604Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250214_230857-wqjfaw6i/logs/debug-core.log"}
+{"time":"2025-02-14T23:08:57.666774389Z","level":"INFO","msg":"created new stream","id":"wqjfaw6i"}
+{"time":"2025-02-14T23:08:57.666857626Z","level":"INFO","msg":"stream: started","id":"wqjfaw6i"}
+{"time":"2025-02-14T23:08:57.667135841Z","level":"INFO","msg":"sender: started","stream_id":"wqjfaw6i"}
+{"time":"2025-02-14T23:08:57.666920147Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"wqjfaw6i"}}
+{"time":"2025-02-14T23:08:57.666980568Z","level":"INFO","msg":"handler: started","stream_id":{"value":"wqjfaw6i"}}
+{"time":"2025-02-14T23:08:57.955289223Z","level":"INFO","msg":"Starting system monitor"}

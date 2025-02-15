@@ -1,0 +1,18 @@
+{"time":"2025-02-10T11:57:27.178597395Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-10T11:57:27.178635423Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250210_115727-mq4bmbg2/logs/debug-core.log"}
+{"time":"2025-02-10T11:57:27.309617469Z","level":"INFO","msg":"created new stream","id":"mq4bmbg2"}
+{"time":"2025-02-10T11:57:27.309699594Z","level":"INFO","msg":"stream: started","id":"mq4bmbg2"}
+{"time":"2025-02-10T11:57:27.309826057Z","level":"INFO","msg":"sender: started","stream_id":"mq4bmbg2"}
+{"time":"2025-02-10T11:57:27.309851869Z","level":"INFO","msg":"handler: started","stream_id":{"value":"mq4bmbg2"}}
+{"time":"2025-02-10T11:57:27.309779403Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"mq4bmbg2"}}
+{"time":"2025-02-10T11:57:27.722402285Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-02-10T11:57:35.708985715Z","level":"INFO","msg":"stream: closing","id":"mq4bmbg2"}
+{"time":"2025-02-10T11:57:35.709039849Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-02-10T11:57:35.710629565Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-02-10T11:57:35.889604333Z","level":"WARN","msg":"No program path found, not creating job artifact. See https://docs.wandb.ai/guides/launch/create-job"}
+{"time":"2025-02-10T11:57:35.889664198Z","level":"INFO","msg":"sender: sendDefer: no job artifact to save"}
+{"time":"2025-02-10T11:57:36.353779896Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-02-10T11:57:36.558378849Z","level":"INFO","msg":"handler: closed","stream_id":{"value":"mq4bmbg2"}}
+{"time":"2025-02-10T11:57:36.558434871Z","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"mq4bmbg2"}}
+{"time":"2025-02-10T11:57:36.558458881Z","level":"INFO","msg":"sender: closed","stream_id":"mq4bmbg2"}
+{"time":"2025-02-10T11:57:36.564042181Z","level":"INFO","msg":"stream: closed","id":"mq4bmbg2"}

@@ -1,0 +1,76 @@
+{
+  "os":  "Linux-5.15.0-131-generic-x86_64-with-glibc2.17",
+  "python":  "3.8.20",
+  "startedAt":  "2025-02-15T00:37:55.191276Z",
+  "program":  "/users/williamb/dev/gaussain_hgnode/train.py",
+  "email":  "william.bittner16@gmail.com",
+  "root":  "/athenahomes/williamb/dev/gaussain_hgnode",
+  "host":  "c2-g8-04",
+  "username":  "williamb",
+  "executable":  "/users/williamb/miniconda3/envs/gaussian_splatting_athena/bin/python",
+  "cpu_count":  40,
+  "cpu_count_logical":  80,
+  "gpu":  "Quadro RTX 6000",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "52521566208",
+      "used":  "5563195392"
+    }
+  },
+  "memory":  {
+    "total":  "404268044288"
+  },
+  "cpu":  {
+    "count":  40,
+    "countLogical":  80
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "Quadro RTX 6000",
+      "memoryTotal":  "25769803776",
+      "cudaCores":  4608,
+      "architecture":  "Turing"
+    }
+  ],
+  "slurm":  {
+    "cluster_name":  "vgg-athena",
+    "conf":  "/etc/slurm/slurm.conf",
+    "cpus_on_node":  "4",
+    "cpus_per_task":  "4",
+    "gpus_on_node":  "1",
+    "gtids":  "0",
+    "job_account":  "vgg",
+    "job_cpus_per_node":  "4",
+    "job_end_time":  "1739781460",
+    "job_gid":  "13626",
+    "job_gpus":  "6",
+    "job_id":  "30313",
+    "job_name":  "8192_seqs_rotnet_transnet_no_layernorm_MLP",
+    "job_nodelist":  "c2-g8-04",
+    "job_num_nodes":  "1",
+    "job_partition":  "low-prio-gpu",
+    "job_qos":  "normal",
+    "job_start_time":  "1739579860",
+    "job_uid":  "3626",
+    "job_user":  "williamb",
+    "jobid":  "30313",
+    "localid":  "0",
+    "mem_per_node":  "49152",
+    "nnodes":  "1",
+    "nodeid":  "0",
+    "nodelist":  "c2-g8-04",
+    "nprocs":  "1",
+    "ntasks":  "1",
+    "prio_process":  "0",
+    "procid":  "0",
+    "submit_dir":  "/athenahomes/williamb/dev/gaussain_hgnode",
+    "submit_host":  "login2",
+    "task_pid":  "1776339",
+    "tasks_per_node":  "1",
+    "topology_addr":  "c2-g8-04",
+    "topology_addr_pattern":  "node",
+    "tres_per_task":  "cpu=4"
+  },
+  "cudaVersion":  "12.4"
+}

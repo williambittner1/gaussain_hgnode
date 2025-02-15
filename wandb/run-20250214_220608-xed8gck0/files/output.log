@@ -1,0 +1,10 @@
+Reading Transforms
+Loading Training Cameras
+Number of points at initialisation :  75000
+Gaussians initialized from scene information.
+Training: 100%|████████████████████████████████████████████████████| 30000/30000 [13:12<00:00, 37.87it/s, Loss=0.0002928]
+/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/sklearn/cluster/_kmeans.py:1416: FutureWarning: The default value of `n_init` will change from 10 to 'auto' in 1.4. Set the value of `n_init` explicitly to suppress the warning
+  super()._check_params_vs_input(X, default_n_init=10)
+/users/williamb/dev/gaussain_hgnode/scene/gaussian_model_new.py:107: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /opt/conda/conda-bld/pytorch_1724789115405/work/torch/csrc/utils/tensor_new.cpp:278.)
+  self.cluster_control_points = torch.tensor(cluster_control_points, device=self.device, dtype=self.get_xyz.dtype)
+Training:  16%|████████▊                                              | 160/1000 [05:51<32:59,  2.36s/it, Loss=0.0021876]

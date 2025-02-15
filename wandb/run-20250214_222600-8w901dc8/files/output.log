@@ -1,0 +1,72 @@
+Reading Transforms
+Loading Training Cameras
+Number of points at initialisation :  75000
+Gaussians initialized from scene information.
+Training:   4%|██▏                                                   | 791/20000 [00:35<11:43, 27.31it/s, Loss=0.0003895]Traceback (most recent call last):
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/runpy.py", line 194, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/adapter/../../debugpy/launcher/../../debugpy/__main__.py", line 39, in <module>
+    cli.main()
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/adapter/../../debugpy/launcher/../../debugpy/../debugpy/server/cli.py", line 430, in main
+    run()
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/adapter/../../debugpy/launcher/../../debugpy/../debugpy/server/cli.py", line 284, in run_file
+    runpy.run_path(target, run_name="__main__")
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_runpy.py", line 321, in run_path
+    return _run_module_code(code, init_globals, run_name,
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_runpy.py", line 135, in _run_module_code
+    _run_code(code, mod_globals, init_globals,
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_runpy.py", line 124, in _run_code
+    exec(code, run_globals)
+  File "/users/williamb/dev/gaussain_hgnode/train.py", line 650, in <module>
+    train()
+  File "/users/williamb/dev/gaussain_hgnode/train.py", line 248, in train
+    scene = train_static_gaussian_model(scene, config, iterations=config.optimization.iterations)
+  File "/users/williamb/dev/gaussain_hgnode/train.py", line 201, in train_static_gaussian_model
+    scene.gaussians.optimizer.step()
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/torch/optim/optimizer.py", line 484, in wrapper
+    out = func(*args, **kwargs)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/torch/optim/optimizer.py", line 89, in _use_grad
+    ret = func(self, *args, **kwargs)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/torch/optim/adam.py", line 216, in step
+    has_complex = self._init_group(
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/torch/optim/adam.py", line 119, in _init_group
+    def _init_group(
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_trace_dispatch_regular.py", line 374, in __call__
+    return None if event == 'call' else NO_FTRACE
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/runpy.py", line 194, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/adapter/../../debugpy/launcher/../../debugpy/__main__.py", line 39, in <module>
+    cli.main()
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/adapter/../../debugpy/launcher/../../debugpy/../debugpy/server/cli.py", line 430, in main
+    run()
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/adapter/../../debugpy/launcher/../../debugpy/../debugpy/server/cli.py", line 284, in run_file
+    runpy.run_path(target, run_name="__main__")
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_runpy.py", line 321, in run_path
+    return _run_module_code(code, init_globals, run_name,
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_runpy.py", line 135, in _run_module_code
+    _run_code(code, mod_globals, init_globals,
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_runpy.py", line 124, in _run_code
+    exec(code, run_globals)
+  File "/users/williamb/dev/gaussain_hgnode/train.py", line 650, in <module>
+    train()
+  File "/users/williamb/dev/gaussain_hgnode/train.py", line 248, in train
+    scene = train_static_gaussian_model(scene, config, iterations=config.optimization.iterations)
+  File "/users/williamb/dev/gaussain_hgnode/train.py", line 201, in train_static_gaussian_model
+    scene.gaussians.optimizer.step()
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/torch/optim/optimizer.py", line 484, in wrapper
+    out = func(*args, **kwargs)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/torch/optim/optimizer.py", line 89, in _use_grad
+    ret = func(self, *args, **kwargs)
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/torch/optim/adam.py", line 216, in step
+    has_complex = self._init_group(
+  File "/users/williamb/miniconda3/envs/gaussian_splatting_athena/lib/python3.8/site-packages/torch/optim/adam.py", line 119, in _init_group
+    def _init_group(
+  File "/athenahomes/williamb/.cursor-server/extensions/ms-python.debugpy-2024.6.0-linux-x64/bundled/libs/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_trace_dispatch_regular.py", line 374, in __call__
+    return None if event == 'call' else NO_FTRACE
+KeyboardInterrupt

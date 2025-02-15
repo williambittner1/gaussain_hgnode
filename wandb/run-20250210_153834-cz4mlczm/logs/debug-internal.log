@@ -1,0 +1,18 @@
+{"time":"2025-02-10T15:38:34.996689062Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2025-02-10T15:38:34.996726423Z","level":"INFO","msg":"created symlink","path":"/athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250210_153834-cz4mlczm/logs/debug-core.log"}
+{"time":"2025-02-10T15:38:35.107586495Z","level":"INFO","msg":"created new stream","id":"cz4mlczm"}
+{"time":"2025-02-10T15:38:35.107642437Z","level":"INFO","msg":"stream: started","id":"cz4mlczm"}
+{"time":"2025-02-10T15:38:35.107722345Z","level":"INFO","msg":"sender: started","stream_id":"cz4mlczm"}
+{"time":"2025-02-10T15:38:35.107718405Z","level":"INFO","msg":"handler: started","stream_id":{"value":"cz4mlczm"}}
+{"time":"2025-02-10T15:38:35.107705832Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"cz4mlczm"}}
+{"time":"2025-02-10T15:38:35.547583638Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-02-10T15:38:46.049557701Z","level":"INFO","msg":"stream: closing","id":"cz4mlczm"}
+{"time":"2025-02-10T15:38:46.04967954Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-02-10T15:38:46.050767783Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-02-10T15:38:46.179997493Z","level":"WARN","msg":"No program path found, not creating job artifact. See https://docs.wandb.ai/guides/launch/create-job"}
+{"time":"2025-02-10T15:38:46.180029122Z","level":"INFO","msg":"sender: sendDefer: no job artifact to save"}
+{"time":"2025-02-10T15:38:46.556441003Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-02-10T15:38:47.603236402Z","level":"INFO","msg":"handler: closed","stream_id":{"value":"cz4mlczm"}}
+{"time":"2025-02-10T15:38:47.603309158Z","level":"INFO","msg":"sender: closed","stream_id":"cz4mlczm"}
+{"time":"2025-02-10T15:38:47.603291094Z","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"cz4mlczm"}}
+{"time":"2025-02-10T15:38:47.608413003Z","level":"INFO","msg":"stream: closed","id":"cz4mlczm"}

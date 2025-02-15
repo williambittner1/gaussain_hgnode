@@ -1,0 +1,26 @@
+2025-02-14 23:08:57,532 INFO    MainThread:1922105 [wandb_setup.py:_flush():79] Current SDK version is 0.18.5
+2025-02-14 23:08:57,533 INFO    MainThread:1922105 [wandb_setup.py:_flush():79] Configure stats pid to 1922105
+2025-02-14 23:08:57,534 INFO    MainThread:1922105 [wandb_setup.py:_flush():79] Loading settings from /users/williamb/.config/wandb/settings
+2025-02-14 23:08:57,535 INFO    MainThread:1922105 [wandb_setup.py:_flush():79] Loading settings from /athenahomes/williamb/dev/gaussain_hgnode/wandb/settings
+2025-02-14 23:08:57,535 INFO    MainThread:1922105 [wandb_setup.py:_flush():79] Loading settings from environment variables: {}
+2025-02-14 23:08:57,535 INFO    MainThread:1922105 [wandb_setup.py:_flush():79] Applying setup settings: {'mode': None, '_disable_service': None}
+2025-02-14 23:08:57,536 WARNING MainThread:1922105 [wandb_setup.py:_flush():79] Could not save program above cwd: /users/williamb/dev/gaussain_hgnode/train.py
+2025-02-14 23:08:57,537 INFO    MainThread:1922105 [wandb_setup.py:_flush():79] Inferring run settings from compute environment: {'program_relpath': None, 'program_abspath': '/users/williamb/dev/gaussain_hgnode/train.py', 'program': '/users/williamb/dev/gaussain_hgnode/train.py'}
+2025-02-14 23:08:57,537 INFO    MainThread:1922105 [wandb_setup.py:_flush():79] Applying login settings: {}
+2025-02-14 23:08:57,537 INFO    MainThread:1922105 [wandb_init.py:_log_setup():534] Logging user logs to /athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250214_230857-wqjfaw6i/logs/debug.log
+2025-02-14 23:08:57,538 INFO    MainThread:1922105 [wandb_init.py:_log_setup():535] Logging internal logs to /athenahomes/williamb/dev/gaussain_hgnode/wandb/run-20250214_230857-wqjfaw6i/logs/debug-internal.log
+2025-02-14 23:08:57,539 INFO    MainThread:1922105 [wandb_init.py:init():621] calling init triggers
+2025-02-14 23:08:57,540 INFO    MainThread:1922105 [wandb_init.py:init():628] wandb.init called with sweep_config: {}
+config: {}
+2025-02-14 23:08:57,540 INFO    MainThread:1922105 [wandb_init.py:init():671] starting backend
+2025-02-14 23:08:57,542 INFO    MainThread:1922105 [wandb_init.py:init():675] sending inform_init request
+2025-02-14 23:08:57,549 INFO    MainThread:1922105 [backend.py:_multiprocessing_setup():104] multiprocessing start_methods=fork,spawn,forkserver, using: spawn
+2025-02-14 23:08:57,551 INFO    MainThread:1922105 [wandb_init.py:init():688] backend started and connected
+2025-02-14 23:08:57,571 INFO    MainThread:1922105 [wandb_init.py:init():783] updated telemetry
+2025-02-14 23:08:57,623 INFO    MainThread:1922105 [wandb_init.py:init():816] communicating run to backend with 90.0 second timeout
+2025-02-14 23:08:57,939 INFO    MainThread:1922105 [wandb_init.py:init():867] starting run threads in backend
+2025-02-14 23:08:58,828 INFO    MainThread:1922105 [wandb_run.py:_console_start():2463] atexit reg
+2025-02-14 23:08:58,828 INFO    MainThread:1922105 [wandb_run.py:_redirect():2311] redirect: wrap_raw
+2025-02-14 23:08:58,830 INFO    MainThread:1922105 [wandb_run.py:_redirect():2376] Wrapping output streams.
+2025-02-14 23:08:58,830 INFO    MainThread:1922105 [wandb_run.py:_redirect():2401] Redirects installed.
+2025-02-14 23:08:58,856 INFO    MainThread:1922105 [wandb_init.py:init():911] run started, returning control to user process
