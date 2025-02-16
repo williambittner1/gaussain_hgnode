@@ -80,13 +80,14 @@ class GaussianModel:
 
         # Clustering attributes (to be computed later).
         self.cluster_label = None                  # Tensor of cluster labels for each gaussian.
-        self.cluster_control_points = None         # Tensor of shape [n_clusters, 3]
-        self.cluster_control_orientations = None     # Tensor of shape [n_clusters, 4] (initially identity)
-        self.relative_positions = None             # For each gaussian: offset from its cluster control point.
+        self.xyz_cp = None              # Tensor of shape [n_clusters, 3] (xyz positions of control points)
+        self.rot_cp = None              # Tensor of shape [n_clusters, 4] (initially identity) (quaternions of control points)
+        self.xyz_rel = None             # For each gaussian: offset from its cluster control point.
+        self.rot_rel = None             # For each gaussian: relative rotation with respect to its cluster control point.
 
 
 
-    def cluster_gaussians(self, n_clusters=3):
+    def cluster_gaussians_old(self, n_clusters=3):
         """
         Cluster gaussians into 3 clusters based solely on their 3D positions.
         For each cluster the control point is defined as the mean of the positions
@@ -96,28 +97,135 @@ class GaussianModel:
         positions = self.get_xyz.detach().cpu().numpy()  # (N, 3)
         kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(positions)
         labels = kmeans.labels_  # (N,)
-        self.cluster_label = torch.tensor(labels, device=self.device, dtype=torch.long)
+        self.cluster_label = torch.tensor(labels, device=self.device, dtype=torch.long).unsqueeze(1)
 
         # Compute cluster control points (mean of positions in each cluster)
-        cluster_control_points = []
+        xyz_cp = []
         for cl in range(n_clusters):
             indices = np.where(labels == cl)[0]
             cluster_mean = np.mean(positions[indices], axis=0)
-            cluster_control_points.append(cluster_mean)
-        self.cluster_control_points = torch.tensor(cluster_control_points, device=self.device, dtype=self.get_xyz.dtype)
+            xyz_cp.append(cluster_mean)
+        self.xyz_cp = torch.tensor(xyz_cp, device=self.device, dtype=self.get_xyz.dtype)
 
         # Set control orientations to identity for each cluster.
         identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device, dtype=self.get_xyz.dtype)
-        self.cluster_control_orientations = identity_quat.repeat(n_clusters, 1)
+        self.rot_cp = identity_quat.repeat(n_clusters, 1)
 
         # Compute relative offsets: for each gaussian, relative offset = gaussian position - (cluster control point)
         N = positions.shape[0]
         rel_positions = []
         for i in range(N):
             cl = labels[i]
-            rel = positions[i] - self.cluster_control_points[cl].cpu().numpy()
+            rel = positions[i] - self.xyz_cp[cl].cpu().numpy()
             rel_positions.append(rel)
-        self.relative_positions = torch.tensor(rel_positions, device=self.device, dtype=self.get_xyz.dtype)
+        self.xyz_rel = torch.tensor(rel_positions, device=self.device, dtype=self.get_xyz.dtype)
+
+
+    def initialize_controlpoints(self, num_objects):
+        """
+        Cluster all Gaussians into num_objects clusters, and initialize control points.
+        
+        For each cluster:
+        - Set control_point.position as the mean of the positions of all Gaussians in that cluster.
+        - Set control_point.quaternion as the identity unit quaternion.
+        - For each Gaussian in the cluster, compute:
+                relative_position = gaussian.position - control_point.position
+                relative_quaternion = quaternion_multiply(quaternion_inverse(control_point.quaternion), gaussian.quaternion)
+        
+        This function updates the following attributes:
+        - self.cluster_label (Tensor of shape [N, 1])
+        - self.xyz_cp (Tensor of shape [num_objects, 3])
+        - self.rot_cp (Tensor of shape [num_objects, 4])
+        - self.xyz_rel (Tensor of shape [N, 3])
+        - self.rot_rel (Tensor of shape [N, 4])
+        """
+
+        # 1. Cluster the Gaussians based on their positions.
+        positions = self.get_xyz.detach().cpu().numpy()  # shape (N, 3)
+        kmeans = KMeans(n_clusters=num_objects, random_state=42).fit(positions)
+        labels = kmeans.labels_  # shape (N,)
+        
+        # Store cluster labels (as a tensor of shape [N, 1])
+        self.cluster_label = torch.tensor(labels, device=self.device, dtype=torch.long).unsqueeze(1)
+
+        # 2. Compute cluster control points (mean positions) and assign identity quaternions.
+        xyz_cp = []
+        for i in range(num_objects):
+            indices = np.where(labels == i)[0]
+            if indices.size == 0:
+                # If a cluster happens to be empty, set a default value (e.g., origin)
+                cluster_mean = np.array([0.0, 0.0, 0.0])
+                raise ValueError(f"Cluster {i} is empty - this should never happen with K-means clustering")
+            else:
+                cluster_mean = positions[indices].mean(axis=0)
+            xyz_cp.append(cluster_mean)
+        self.xyz_cp = torch.tensor(xyz_cp, device=self.device, dtype=self.get_xyz.dtype)
+        
+        # Use identity quaternions for all control points: (1, 0, 0, 0)
+        identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device, dtype=self.get_xyz.dtype)
+        self.rot_cp = identity_quat.repeat(num_objects, 1)
+        
+        # 3. Compute relative positions and relative rotations for each Gaussian.
+        # relative_position = gaussian.position - cluster_control_point
+        # relative_rotation = quaternion_inverse(control_quat) * gaussian.quaternion
+        gaussian_positions = self.get_xyz  # shape (N, 3)
+        gaussian_rotations = self.get_rotation  # shape (N, 4)
+        
+        # Vectorized computation of relative positions
+        # Use advanced indexing to get control points for each gaussian
+        control_pts = self.xyz_cp[labels]  # Shape: [N, 3]
+        self.xyz_rel = gaussian_positions - control_pts  # Shape: [N, 3]
+        
+        # Vectorized computation of relative rotations
+        control_quats = self.rot_cp[labels]  # Shape: [N, 4]
+        inv_control_quats = quaternion_inverse(control_quats)  # Shape: [N, 4]
+        self.rot_rel = quaternion_multiply(inv_control_quats, gaussian_rotations)  # Shape: [N, 4]
+        
+    
+        
+
+
+    def update_gaussians_from_controlpoints(self):
+        """
+        Update each child Gaussian's absolute transformation based on its parent's updated control point.
+        
+        For each Gaussian:
+        - The new position is computed as:
+            new_position = control_point_position + rotate_vector(control_point_quaternion, relative_position)
+        - The new rotation is computed as:
+            new_rotation = quaternion_multiply(control_point_quaternion, relative_rotation)
+        
+        This function expects that the following attributes are set:
+        - self.cluster_label: Tensor of shape [N, 1] with the cluster (control point) index for each Gaussian.
+        - self.xyz_cp: Tensor of shape [num_objects, 3] containing updated control point positions.
+        - self.rot_cp: Tensor of shape [num_objects, 4] containing updated control point quaternions.
+        - self.xyz_rel: Tensor of shape [N, 3] storing each Gaussian's offset (in its parent's local coordinates).
+        - self.rot_rel: Tensor of shape [N, 4] storing each Gaussian's relative rotation.
+        
+        After computing the new transformations, this function updates the internal parameters:
+        - self._xyz (positions)
+        - self._rotation (rotations)
+        """
+        # Ensure that the cluster labels are a 1D tensor of indices.
+        labels = self.cluster_label.squeeze()  # shape: (N,)
+        
+        # Gather the corresponding control point positions and orientations for each Gaussian.
+        control_positions = self.xyz_cp[labels]          # shape: (N, 3)
+        control_orientations = self.rot_cp[labels]    # shape: (N, 4)
+        
+        # Rotate the stored relative positions by the control point's quaternion.
+        # The helper function rotate_vector expects the quaternion and a vector.
+        rotated_rel_positions = rotate_vector(control_orientations, self.xyz_rel)  # shape: (N, 3)
+        
+        # Update absolute positions.
+        new_positions = control_positions + rotated_rel_positions
+        
+        # Update absolute rotations.
+        new_rotations = quaternion_multiply(control_orientations, self.rot_rel)
+        
+        # Update the internal Gaussian parameters.
+        self._xyz = new_positions.to(self.device)
+        self._rotation = new_rotations.to(self.device)
 
 
     def setup_functions(self):
@@ -248,7 +356,7 @@ class GaussianModel:
         self._semantic_feature = nn.Parameter(self._semantic_feature.transpose(1, 2).contiguous().requires_grad_(False))
         
 
-    def update_dynamic_state(self, t_index, gt_xyz, gt_rot):
+    def update_dynamic_state(self, gt_xyz, gt_rot):
         """
         Update the dynamic parameters (positions and rotations) from precomputed tensors.
         
@@ -257,9 +365,9 @@ class GaussianModel:
             gt_xyz (torch.Tensor): Tensor of shape [T_dynamic, N, 3] with dynamic positions.
             gt_rot (torch.Tensor): Tensor of shape [T_dynamic, N, 4] with dynamic rotations.
         """
-        with torch.no_grad():
-            self._xyz.copy_(gt_xyz[t_index])
-            self._rotation.copy_(gt_rot[t_index])
+    
+        self._xyz = gt_xyz
+        self._rotation = gt_rot
 
 
     def training_setup_0(self, training_args):
@@ -284,15 +392,23 @@ class GaussianModel:
                                                     max_steps       = training_args.position_lr_max_steps)
 
     def training_setup_t(self, training_args):
-        l = [
-            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
-            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
-        ]
-        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-        self.xyz_scheduler_args = get_expon_lr_func(lr_init         = training_args.position_lr_init * self.spatial_lr_scale,
-                                                    lr_final        = training_args.position_lr_final * self.spatial_lr_scale,
-                                                    lr_delay_mult   = training_args.position_lr_delay_mult,
-                                                    max_steps       = training_args.position_lr_max_steps)
+        self._xyz.requires_grad = True
+        self._rotation.requires_grad = True
+        self._opacity.requires_grad = False
+        self._scaling.requires_grad = False
+        self._features_dc.requires_grad = False
+        self._features_rest.requires_grad = False
+        self._semantic_feature.requires_grad = False
+
+        # l = [
+        #     {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+        #     {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
+        # ]
+        # self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        # self.xyz_scheduler_args = get_expon_lr_func(lr_init         = training_args.position_lr_init * self.spatial_lr_scale,
+        #                                             lr_final        = training_args.position_lr_final * self.spatial_lr_scale,
+        #                                             lr_delay_mult   = training_args.position_lr_delay_mult,
+        #                                             max_steps       = training_args.position_lr_max_steps)
 
     def get_initial_parameters(self):
         """
@@ -667,18 +783,22 @@ class GaussianModel:
             new_gaussian.initial_xyz = clone_tensor(self.initial_xyz)
         
         
-        # Copy relative_positions and relative_rotations if they exist
-        if hasattr(self, 'relative_positions') and hasattr(self, 'relative_rotations'):
-            new_gaussian.relative_positions = self.relative_positions.clone().detach()
-            new_gaussian.relative_rotations = self.relative_rotations.clone().detach()
+
+        if hasattr(self, 'xyz_rel') and self.xyz_rel is not None:
+            new_gaussian.xyz_rel = self.xyz_rel.clone().detach()
+
+        if hasattr(self, 'rot_rel') and self.rot_rel is not None:
+            new_gaussian.rot_rel = self.rot_rel.clone().detach()
+
         if hasattr(self, 'cluster_label') and self.cluster_label is not None:
             new_gaussian.cluster_label = clone_tensor(self.cluster_label)
-        if hasattr(self, 'cluster_control_points') and self.cluster_control_points is not None:
-            new_gaussian.cluster_control_points = clone_tensor(self.cluster_control_points)
-        if hasattr(self, 'cluster_control_orientations') and self.cluster_control_orientations is not None:
-            new_gaussian.cluster_control_orientations = clone_tensor(self.cluster_control_orientations)
-        if hasattr(self, 'relative_positions') and self.relative_positions is not None:
-            new_gaussian.relative_positions = clone_tensor(self.relative_positions)
+
+        if hasattr(self, 'xyz_cp') and self.xyz_cp is not None:
+            new_gaussian.xyz_cp = clone_tensor(self.xyz_cp)
+
+        if hasattr(self, 'rot_cp') and self.rot_cp is not None:
+            new_gaussian.rot_cp = clone_tensor(self.rot_cp)
+
         
 
         # Copy other necessary attributes
@@ -700,8 +820,8 @@ class GaussianModel:
             'semantic_feature': self._semantic_feature.cpu().detach().numpy(),
             'optimizer_state_dict': self.optimizer.state_dict() if self.optimizer else None,
             'cluster_label': self.cluster_label.cpu().detach().numpy() if self.cluster_label is not None else None,
-            'relative_positions': self.relative_positions.cpu().detach().numpy() if hasattr(self, 'relative_positions') else None,
-            'relative_rotations': self.relative_rotations.cpu().detach().numpy() if hasattr(self, 'relative_rotations') else None
+            'xyz_rel': self.xyz_rel.cpu().detach().numpy() if hasattr(self, 'xyz_rel') else None,
+            'rot_rel': self.rot_rel.cpu().detach().numpy() if hasattr(self, 'rot_rel') else None
         }
 
     def load_state_dict(self, state_dict):
@@ -717,11 +837,11 @@ class GaussianModel:
         if state_dict.get('cluster_label') is not None:
             self.cluster_label = torch.tensor(state_dict['cluster_label'], device="cuda").long()
 
-        if state_dict.get('relative_positions') is not None:
-            self.relative_positions = torch.tensor(state_dict['relative_positions'], device="cuda").requires_grad_(True)
+        if state_dict.get('xyz_rel') is not None:
+            self.xyz_rel = torch.tensor(state_dict['xyz_rel'], device="cuda").requires_grad_(True)
 
-        if state_dict.get('relative_rotations') is not None:
-            self.relative_rotations = torch.tensor(state_dict['relative_rotations'], device="cuda").requires_grad_(True)
+        if state_dict.get('rot_rel') is not None:
+            self.rot_rel = torch.tensor(state_dict['rot_rel'], device="cuda").requires_grad_(True)
 
         if self.optimizer and state_dict.get('optimizer_state_dict'):
             self.optimizer.load_state_dict(state_dict['optimizer_state_dict'])

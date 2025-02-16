@@ -4,7 +4,7 @@ from pathlib import Path
 
 def collect_first_images():
     
-    dataset_name = "25_cams_1k_res"
+    dataset_name = "100_ts_spheres_and_floor_25_cams_1k_res"
 
     output_dir = Path(f'data/{dataset_name}/images')
     output_dir.mkdir(parents=True, exist_ok=True)

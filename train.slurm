@@ -8,9 +8,9 @@
 #SBATCH --error=/users/williamb/dev/gaussain_hgnode/slurm/slurm_%A.err     #SBATCH --error=slurm_%A_%a.err
 #SBATCH --output=/users/williamb/dev/gaussain_hgnode/slurm/slurm_%A.out    #SBATCH --output=slurm_%A_%a.out
 #SBATCH --time=56:00:00                 # Time limit (HH:MM:SS)
-#SBATCH --partition=low-prio-gpu       # Or 'gpu' if you need GPUs
+#SBATCH --partition=gpu       # Or 'gpu' if you need GPUs
 #SBATCH --gres=gpu:1                    # Uncomment and adjust if using GPUs
-#SBATCH --constraint=rtx6k
+#SBATCH --constraint=a6000
 #SBATCH --requeue
 
 # Load modules (if necessary for your environment)

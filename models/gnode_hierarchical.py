@@ -66,6 +66,14 @@ class GraphNeuralODEFuncHierarchical(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, 3)
         )
+
+        # Initialize f_vel with small weights using Xavier initialization
+        for layer in self.f_vel:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight, gain=0.1)
+                nn.init.zeros_(layer.bias)
+
+        
         # For dx_o_omega: correction for the object's angular velocity.
         self.f_omega = nn.Sequential(
             nn.Linear(object_dim + object_dim + 1, hidden_dim),
