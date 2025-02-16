@@ -39,3 +39,31 @@ class PreRenderedGTDataset(Dataset):
         img = Image.open(filepath).convert("RGB")
         img = self.transform(img)  # tensor in [0,1]
         return img, cam, t
+
+
+
+
+class ControlPointDataset(Dataset):
+    """
+    Dataset for ground-truth control point trajectories.
+    
+    Expects:
+      - gt_xyz_cp: Tensor of shape [B, T, num_controlpoints, 3]
+      - gt_rot_cp: Tensor of shape [B, T, num_controlpoints, 4]
+      
+    Each item is a dictionary with keys:
+      "gt_xyz_cp": [T, num_controlpoints, 3]
+      "gt_rot_cp": [T, num_controlpoints, 4]
+    """
+    def __init__(self, gt_xyz_cp, gt_rot_cp):
+        self.gt_xyz_cp = gt_xyz_cp
+        self.gt_rot_cp = gt_rot_cp
+
+    def __len__(self):
+        return self.gt_xyz_cp.shape[0]
+
+    def __getitem__(self, idx):
+        return {
+            "gt_xyz_cp": self.gt_xyz_cp[idx],  # [T, num_controlpoints, 3]
+            "gt_rot_cp": self.gt_rot_cp[idx]     # [T, num_controlpoints, 4]
+        }
