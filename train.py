@@ -39,7 +39,7 @@ if not os.path.exists(debug_render_dir):
 @dataclass
 class OptimizationConfig:
     iterations: int = 20_000          # number of iterations to train the static gaussian model
-    epochs: int = 10_000              # dynamic gaussian model training epochs
+    epochs: int = 30_000             # dynamic gaussian model training epochs
 
     total_timesteps: int = 100
     initial_timesteps: int = 3
@@ -94,7 +94,7 @@ class PipelineConfig:
 @dataclass
 class ExperimentConfig:
     device: torch.device = torch.device("cuda")
-    learning_rate: float = 5e-3
+    learning_rate: float = 1e-3
     num_epochs: int = 300000
     viz_iter: int = 1000
     eval_iter: int = 10
@@ -109,17 +109,19 @@ class ExperimentConfig:
     num_samples_eval: int = 10
     num_initial_train_time_samples: int = 5
     train_samples_step: int = 1
-    loss_threshold: float = 5e-5
+    loss_threshold: float = 1e-7
     num_train_data_sequences: int = 2
     num_test_data_sequences: int = 1
-    batch_size: int = 2
+    batch_size: int = 8
     use_all_segments: bool = False
     stride: int = 10
     dynamics_type: str = "double_pendulum_cartesian_rigid"
     data_device: torch.device = torch.device("cuda")
     data_path: str = ModelConfig.data_path
     gt_mode: str = "python"  # or "blender"
-    num_sequences: int = 4    # number of sequences to simulate
+    num_sequences: int = 8    # number of sequences to simulate
+    photometric_loss_length: int = 1
+    num_train_cams: int = 3
 
 
 @dataclass
@@ -378,12 +380,11 @@ def train():
             gaussians_t0.update_gaussians_from_controlpoints()
         """
 
-    # TODO: Create a Dataset and dataloader from gt_xyz_cp and gt_rot_cp
 
         
     # Create a dataset & dataloader from the simulated GT control point data.
     cp_dataset = ControlPointDataset(gt_xyz_cp, gt_rot_cp)
-    dataloader = DataLoader(cp_dataset, batch_size=config.experiment.num_sequences, shuffle=True)
+    dataloader = DataLoader(cp_dataset, batch_size=config.experiment.batch_size, shuffle=False)
 
     ##########################################
     # 4. Setup Dynamic Model    
@@ -396,12 +397,12 @@ def train():
         node_dim=13,
         hidden_dim=256,
         n_hidden_layers=4,
-        solver="rk4",
-        options={"step_size": 0.04},
-        # solver="dopri5",
-        # rtol=1e-4,
-        # atol=1e-5,
-        # options={"max_num_steps": 200},
+        # solver="rk4",
+        # options={"step_size": 0.04},
+        solver="dopri5",
+        rtol=1e-2,
+        atol=1e-4,
+        options={"max_num_steps": 200},
         device=device
     )
 
@@ -418,13 +419,41 @@ def train():
 
     current_segment_length = config.optimization.initial_timesteps
 
+
+    # Initialize Pseudo-GT
   
+    pseudo_gt_xyz_list = []
+    pseudo_gt_rot_list = []
+
+    for i in range(config.experiment.num_sequences):
+                
+        # Get positions and rotations for timestep t0
+        pseudo_gt_xyz_t0 = gt_xyz_cp[i, 0, :, :].squeeze(0)  # [N, 3]
+        pseudo_gt_rot_t0 = gt_rot_cp[i, 0, :, :].squeeze(0)   # [N, 4]
+        
+        # Get positions and rotations for timestep t1
+        pseudo_gt_xyz_t1 = gt_xyz_cp[i, 1, :, :].squeeze(0)  # [N, 3]
+        pseudo_gt_rot_t1 = gt_rot_cp[i, 1, :, :].squeeze(0)   # [N, 4]
+  
+        # Stack timesteps for this batch
+        batch_xyz = torch.stack([pseudo_gt_xyz_t0, pseudo_gt_xyz_t1], dim=0)  # [T=2, N, 3]
+        batch_rot = torch.stack([pseudo_gt_rot_t0, pseudo_gt_rot_t1], dim=0)  # [T=2, N, 4]
+        
+        pseudo_gt_xyz_list.append(batch_xyz)
+        pseudo_gt_rot_list.append(batch_rot)
+    
+    # Stack all batches
+    pseudo_gt_xyz = torch.stack(pseudo_gt_xyz_list, dim=0)  # [B, T, N, 3]
+    pseudo_gt_rot = torch.stack(pseudo_gt_rot_list, dim=0)  # [B, T, N, 4]
+    
+    # Concatenate xyz and rotation along last dimension
+    pseudo_gt = torch.cat([pseudo_gt_xyz, pseudo_gt_rot], dim=-1)  # [B, T, N, 7]
+
 
 
     ##########################################
     # 7. Train Dynamic Model (GNODE)
     ##########################################
-    
 
     # Train-Loop
     epoch_bar = tqdm(range(config.optimization.epochs), desc=f"Training")
@@ -444,106 +473,172 @@ def train():
         
 
         num_batches = len(dataloader)
-
+        epoch_loss = 0.0
 
         # Loop over the dataloader batches (each batch is a full sequence)
         for batch_idx, batch in enumerate(dataloader):
 
-            epoch_loss = 0.0
 
             # Each batch is a dictionary with keys "gt_xyz_cp" and "gt_rot_cp"
             # Their shapes: [B, T, num_controlpoints, 3] and [B, T, num_controlpoints, 4]
             batch_gt_xyz_cp = batch["gt_xyz_cp"].to(device)  # [B, T, N, 3]
             batch_gt_rot_cp = batch["gt_rot_cp"].to(device)  # [B, T, N, 4]
 
-            
-            gaussians_t1_list = []
-            gaussians_t0_list = []
-            
-            B = batch_gt_xyz_cp.shape[0]
-            for b in range(B):
+            num_batch_seqs = batch_gt_xyz_cp.shape[0]
+            batch_loss = 0.0
+
+            if epoch <= 300:
+                gaussians_t1_list = []
+                gaussians_t0_list = []
                 
-                # set gaussians_t0 from simulation (or data)
-                gaussians_t0 = gaussians_t0.clone()
-                gaussians_t0.xyz_cp = batch_gt_xyz_cp[b, 0, :, :].squeeze(0)  # [N, 3]
-                gaussians_t0.rot_cp = batch_gt_rot_cp[b, 0, :, :].squeeze(0)   # [N, 4]
-                gaussians_t0.update_gaussians_from_controlpoints()
-                gaussians_t0_list.append(gaussians_t0)
+                # Retrieve gaussians_t0 and gaussians_t1 from batch
+                
+
+
+                gaussian_retrieval_start_time = time.time()
+                # retrieve gaussians_t0 and gaussians_t1 for each sequence in batch
+                for b in range(num_batch_seqs):
+
+                    
+                    # set gaussians_t0 from simulation (or data)
+                    gaussians_t0 = gaussians_t0.clone()
+                    gaussians_t0.xyz_cp = batch_gt_xyz_cp[b, 0, :, :].squeeze(0)  # [N, 3]
+                    gaussians_t0.rot_cp = batch_gt_rot_cp[b, 0, :, :].squeeze(0)   # [N, 4]
+                    gaussians_t0.update_gaussians_from_controlpoints()
+                    gaussians_t0_list.append(gaussians_t0)
+
+                    
+                    # set gaussians_t1 from simulation (or data)
+                    gaussians_t1 = gaussians_t0.clone()
+                    gaussians_t1.xyz_cp = batch_gt_xyz_cp[b, 1, :, :].squeeze(0)  # [N, 3]
+                    gaussians_t1.rot_cp = batch_gt_rot_cp[b, 1, :, :].squeeze(0)   # [N, 4]
+                    gaussians_t1.update_gaussians_from_controlpoints()
+                    gaussians_t1_list.append(gaussians_t1)
+
+                gaussian_retrieval_end_time = time.time()
+                gaussian_retrieval_time = gaussian_retrieval_end_time - gaussian_retrieval_start_time
+                # print(f"Gaussian retrieval time: {gaussian_retrieval_time:.5f} seconds")
 
                 
-                # set gaussians_t1 from simulation (or data)
-                gaussians_t1 = gaussians_t0.clone()
-                gaussians_t1.xyz_cp = batch_gt_xyz_cp[b, 1, :, :].squeeze(0)  # [N, 3]
-                gaussians_t1.rot_cp = batch_gt_rot_cp[b, 1, :, :].squeeze(0)   # [N, 4]
-                gaussians_t1.update_gaussians_from_controlpoints()
-                gaussians_t1_list.append(gaussians_t1)
-
-
-            z0_objects = encoder(gaussians_t0_list, gaussians_t1_list) # shape: [B, N, 13]
+                encoder_start_time = time.time()
+                z0_objects = encoder(gaussians_t0_list, gaussians_t1_list) # shape: [B, N, 13]
+                encoder_end_time = time.time()
+                encoder_time = encoder_end_time - encoder_start_time
+                # print(f"Encoder time: {encoder_time:.5f} seconds")
+            
+            model_prediction_start_time = time.time()
             model.func.nfe = 0
             z_traj = model(z0_objects, t_span) # shape: [B, T, N, D]
 
-            for b in range(B):
+            model_prediction_end_time = time.time()
+            model_prediction_time = model_prediction_end_time - model_prediction_start_time
+            # print(f"Model prediction time: {model_prediction_time:.5f} seconds")
+
+
+            render_start_time = time.time()
+
+            for seq in range(num_batch_seqs):
+
+                num_timesteps = 0
+                sequence_loss = 0.0
+
 
                 for t in range(current_segment_length):
 
-                    # Update temporary prediction gaussians from predicted control points
-                    tmp_pred_xyz_cp = z_traj[b, t, :, :3]
-                    tmp_pred_rot_cp = z_traj[b, t, :, 3:7]
-                    tmp_gaussians_pred = gaussians_t0.clone()
-                    tmp_gaussians_pred.xyz_cp = tmp_pred_xyz_cp
-                    tmp_gaussians_pred.rot_cp = tmp_pred_rot_cp
-                    tmp_gaussians_pred.update_gaussians_from_controlpoints()
+                    # Use pseudo 3d ground-truth for all timesteps except the last photometric loss length timesteps
+                    if t < current_segment_length - config.experiment.photometric_loss_length:
+                        pseudo_3d_loss = F.mse_loss(z_traj[b, t, :, :3], pseudo_gt[seq, t, :, :3])
+                        
+                        sequence_loss += pseudo_3d_loss
+                        num_timesteps += 1
 
-                    # Update temporary gt gaussians from gt control points
-                    tmp_gt_xyz_cp = batch_gt_xyz_cp[b, t, :, :]
-                    tmp_gt_rot_cp = batch_gt_rot_cp[b, t, :, :]
-                    tmp_gaussians_gt = gaussians_t0.clone()
-                    tmp_gaussians_gt.xyz_cp = tmp_gt_xyz_cp
-                    tmp_gaussians_gt.rot_cp = tmp_gt_rot_cp
-                    tmp_gaussians_gt.update_gaussians_from_controlpoints()
-            
-                    for cam in range(2):
-                        viewpoint_cam = cam_stack[cam]
+                    elif t >= current_segment_length - config.experiment.photometric_loss_length:
+                        # Update temporary prediction gaussians from predicted control points
+                        tmp_pred_xyz_cp = z_traj[seq, t, :, :3]
+                        tmp_pred_rot_cp = z_traj[seq, t, :, 3:7]
+                        tmp_gaussians_pred = gaussians_t0.clone()
+                        tmp_gaussians_pred.xyz_cp = tmp_pred_xyz_cp
+                        tmp_gaussians_pred.rot_cp = tmp_pred_rot_cp
+                        tmp_gaussians_pred.update_gaussians_from_controlpoints()
 
-                        # Render prediction
-                        render_pkg = render(viewpoint_cam, tmp_gaussians_pred, config.pipeline, background)
-                        pred_rendered_image = render_pkg["render"]
+                        # Update temporary gt gaussians from gt control points
+                        tmp_gt_xyz_cp = batch_gt_xyz_cp[seq, t, :, :]
+                        tmp_gt_rot_cp = batch_gt_rot_cp[seq, t, :, :]
+                        tmp_gaussians_gt = gaussians_t0.clone()
+                        tmp_gaussians_gt.xyz_cp = tmp_gt_xyz_cp
+                        tmp_gaussians_gt.rot_cp = tmp_gt_rot_cp
+                        tmp_gaussians_gt.update_gaussians_from_controlpoints()
+                
+                        timestep_loss = 0.0
 
-                        # Render gt
-                        with torch.no_grad():
-                            render_pkg_gt = render(viewpoint_cam, tmp_gaussians_gt, config.pipeline, background)
-                            gt_rendered_image = render_pkg_gt["render"]
+                        for cam in range(config.experiment.num_train_cams):
+                            viewpoint_cam = cam_stack[cam]
 
-                        loss_i = F.mse_loss(pred_rendered_image, gt_rendered_image)
-                        loss_list.append(loss_i)
+                            # Render prediction
+                            render_pkg = render(viewpoint_cam, tmp_gaussians_pred, config.pipeline, background) # ~6-13ms
+                            pred_rendered_image = render_pkg["render"]
+
+                            # Render gt
+                            with torch.no_grad():
+                                render_pkg_gt = render(viewpoint_cam, tmp_gaussians_gt, config.pipeline, background)
+                                gt_rendered_image = render_pkg_gt["render"]
+
+                            loss_i = F.mse_loss(pred_rendered_image, gt_rendered_image)
+                            timestep_loss += loss_i / config.experiment.num_train_cams
+
+
+                        sequence_loss += timestep_loss
+                        num_timesteps += 1
+                
                     
-            batch_loss = torch.stack(loss_list).mean()
+                batch_loss += sequence_loss / num_timesteps
+            
+            batch_loss = batch_loss / num_batch_seqs
+            
+            epoch_loss += batch_loss
+
+            render_end_time = time.time()
+            render_time = render_end_time - render_start_time
+            # print(f"Render time: {render_time:.5f} seconds")
+
+        
 
             optimizer.zero_grad()
+            
+            backward_start_time = time.time()
             batch_loss.backward(retain_graph=False)
+            backward_end_time = time.time()
+            backward_time = backward_end_time - backward_start_time
+            # print(f"Backward time: {backward_time:.5f} seconds")
+
             optimizer.step()
 
-            epoch_loss += batch_loss.item()
-
-        epoch_loss /= num_batches
+        epoch_loss = epoch_loss / num_batches
 
         epoch_time = time.time() - epoch_start_time
         epochs_per_sec = 1 / epoch_time
 
-        log.update({"loss": batch_loss.item(),
+        log.update({"loss": epoch_loss.item(),
+                    "epoch_loss": epoch_loss.item(),
+                    "batch_loss": batch_loss.item(),
                     "nfe": model.func.nfe,
                     "segment_length": current_segment_length,
                     "epoch": epoch,
-                    "epochs_per_sec": epochs_per_sec
+                    "epochs_per_sec": epochs_per_sec,
+                    "encoder_time": encoder_time,
+                    "model_prediction_time": model_prediction_time,
+                    "render_time": render_time,
+                    "backward_time": backward_time,
+                    "total_time": epoch_time
                     })
         
 
 
         # Log video
+        """
         if epoch % 100 == 0:
             print(f"logging debug video at epoch {epoch}...")
-            wandb_cam_stack = cam_stack[1:3]
+            wandb_cam_stack = cam_stack[1:2]
             with torch.no_grad():   
                 for b in range(config.experiment.num_sequences):
                     # Create a dictionary (or list) to collect video frames for each camera.
@@ -583,12 +678,77 @@ def train():
                             f"gt_video_sequence_{b}_cam_{cam_idx}": wandb.Video(gt_video_frames, fps=5)
                         })
             print(f"logged debug video at epoch {epoch}")
+        """
+
+                # Log video
+        if epoch % 100 == 0:
+            print(f"logging debug video at epoch {epoch}...")
+            wandb_cam_stack = cam_stack[1:2]
+            with torch.no_grad():   
+                for b in range(config.experiment.batch_size):
+                    # Create a dictionary to collect combined video frames for each camera
+                    combined_video_frames_dict = {cam_idx: [] for cam_idx in range(len(wandb_cam_stack))}
+                    
+                    z_traj = model(z0_objects, t_span)
+
+                    for t in range(current_segment_length):
+                        # Update temporary prediction gaussians from predicted control points
+                        tmp_gaussians_pred = gaussians_t0.clone()
+                        tmp_gaussians_pred.xyz_cp = z_traj[b, t, :, :3]
+                        tmp_gaussians_pred.rot_cp = z_traj[b, t, :, 3:7]
+                        tmp_gaussians_pred.update_gaussians_from_controlpoints()
+
+                        # Update temporary GT gaussians from GT control points
+                        tmp_gaussians_gt = gaussians_t0.clone()
+                        tmp_gaussians_gt.xyz_cp = gt_xyz_cp[b, t, :, :]
+                        tmp_gaussians_gt.rot_cp = gt_rot_cp[b, t, :, :]
+                        tmp_gaussians_gt.update_gaussians_from_controlpoints()
+                        
+                        for cam_idx, cam in enumerate(wandb_cam_stack):  
+                            # Render predicted image
+                            render_pkg = render(cam, tmp_gaussians_pred, config.pipeline, background)
+                            pred_image = (render_pkg["render"] * 255).clamp(0, 255).to(torch.uint8)
+                            
+                            # Render ground-truth image
+                            render_pkg_gt = render(cam, tmp_gaussians_gt, config.pipeline, background)
+                            gt_image = (render_pkg_gt["render"] * 255).clamp(0, 255).to(torch.uint8)
+                            
+                            # Convert to numpy and concatenate horizontally
+                            pred_np = pred_image.detach().cpu().numpy()
+                            gt_np = gt_image.detach().cpu().numpy()
+                            combined_frame = np.concatenate([pred_np, gt_np], axis=2)  # Concatenate along width
+                            
+                            combined_video_frames_dict[cam_idx].append(combined_frame)
+                    
+                    # After looping over time steps, stack frames per camera
+                    for cam_idx in range(len(wandb_cam_stack)):
+                        combined_video = np.stack(combined_video_frames_dict[cam_idx]).astype(np.uint8)
+                        log.update({
+                            f"pred_gt_video_sequence_{b}_cam_{cam_idx}": wandb.Video(combined_video, fps=5)
+                        })
+            print(f"logged debug video at epoch {epoch}")
 
 
-        if epoch_loss < 1e-5:
+        if epoch_loss < config.experiment.loss_threshold:
+            
+            added_timestep = current_segment_length - config.experiment.photometric_loss_length
+            pseudo_gt_xyz = z_traj[:, added_timestep:added_timestep+1, :, :3]
+            pseudo_gt_rot = z_traj[:, added_timestep:added_timestep+1, :, 3:7]
+            new_pseudo_gt = torch.cat([pseudo_gt_xyz, pseudo_gt_rot], dim=-1).detach()
+            
+            # Pseudo-GT is fixed once it is created
+            # if pseudo_gt is None:
+            #     pseudo_gt = new_pseudo_gt  # First timestep
+            # else:
+            #     pseudo_gt = torch.cat([pseudo_gt, new_pseudo_gt], dim=1)  # shape: [B, T+=1, N, 7]
+
+            # Pseudo-GT is always the trajectory from the last model prediction
+            pseudo_gt = z_traj.detach()
+
+
             current_segment_length += 1
-            print(f"updated current_segment_length to: {current_segment_length}")
-
+            print(f"\nupdated current_segment_length to: {current_segment_length}")
+        
         # if epoch % 100 == 0:
             # render video with model prediction gaussians and gt gaussians
 
@@ -597,11 +757,11 @@ def train():
 
 
         epoch_bar.set_postfix({
-            'Epoch': epoch,
             'Loss': f'{batch_loss.item():.7f}',
             'nfe': model.func.nfe,
-            'segment_length': current_segment_length,
-            'iter_per_sec': epochs_per_sec
+            'seg_len': current_segment_length,
+            'it/s': epochs_per_sec,
+
         })
 
 

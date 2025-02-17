@@ -85,7 +85,6 @@ class ExplicitEncoder(torch.nn.Module):
         super().__init__()
 
     def forward(self, gaussians_t0, gaussians_t1):
-        # TODO: make this work for batch size > 1
         # Extract control point positions and rotations at t=0 and t=1.
         batch_states = []
         # Assume the two lists have the same length (batch size B)
