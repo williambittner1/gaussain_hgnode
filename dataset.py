@@ -4,43 +4,49 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
+from typing import List
 
-class PreRenderedGTDataset(Dataset):
-    def __init__(self, gt_base_dir, total_timesteps, num_cams, transform=None):
+class PreRenderedGTDataset(torch.utils.data.Dataset):
+    def __init__(self, gt_base_dir, split: str, num_timesteps: int, cam_ids: List[int], transform=None):
         """
         Args:
-            gt_base_dir (str): Path to the directory where GT images are saved.
-              Expected structure: 
-                gt_base_dir/<cam_id>/render_<cam_id>_timestep_<t>.jpg
-            total_timesteps (int): Total number of timesteps.
-            num_cams (int): Total number of cameras.
-            transform (callable, optional): A function/transform to apply to the images.
+            gt_base_dir (str): Base directory where images were saved.
+            split (str): 'train' or 'test'
+            num_timesteps (int): Number of timesteps per sequence.
+            cam_ids (List[int]): List of camera IDs.
+            transform (callable, optional): Transform to apply to the image.
         """
-        self.gt_base_dir = gt_base_dir
-        self.total_timesteps = total_timesteps
-        self.num_cams = num_cams
-        self.transform = transform if transform is not None else transforms.ToTensor()
-        # Build a list of (cam_id, timestep, filepath)
         self.samples = []
-        for cam in range(num_cams):
-            cam_folder = os.path.join(gt_base_dir, f"{cam:03d}")
-            for t in range(total_timesteps):
-                filename = f"render_{cam:03d}_timestep_{t:05d}.jpg"
-                filepath = os.path.join(cam_folder, filename)
-                if not os.path.exists(filepath):
-                    raise FileNotFoundError(f"File not found: {filepath}")
-                self.samples.append((cam, t, filepath))
-    
+        self.transform = transform if transform is not None else transforms.ToTensor()
+        # Assume each scene is stored in a subfolder under gt_base_dir/split/
+        split_dir = os.path.join(gt_base_dir, split)
+        scene_dirs = sorted(os.listdir(split_dir))
+        for scene in scene_dirs:
+            scene_path = os.path.join(split_dir, scene)
+            for cam_id in cam_ids:
+                cam_folder = os.path.join(scene_path, f"{cam_id:03d}")
+                if not os.path.exists(cam_folder):
+                    continue
+                for t in range(num_timesteps):
+                    filename = f"render_{cam_id:03d}_timestep_{t:05d}.jpg"
+                    filepath = os.path.join(cam_folder, filename)
+                    if os.path.exists(filepath):
+                        self.samples.append({
+                            "scene": scene,
+                            "cam_id": cam_id,
+                            "timestep": t,
+                            "filepath": filepath
+                        })
+
     def __len__(self):
         return len(self.samples)
-    
+
     def __getitem__(self, idx):
-        cam, t, filepath = self.samples[idx]
-        img = Image.open(filepath).convert("RGB")
-        img = self.transform(img)  # tensor in [0,1]
-        return img, cam, t
-
-
+        sample = self.samples[idx]
+        img = Image.open(sample["filepath"]).convert("RGB")
+        if self.transform:
+            img = self.transform(img)
+        return img, sample["cam_id"], sample["timestep"]
 
 
 class ControlPointDataset(Dataset):
@@ -74,7 +80,7 @@ class ControlPointDataset(Dataset):
         return {
             "gt_xyz_cp": self.gt_xyz_cp[idx],  # [T, num_controlpoints, 3]
             "gt_rot_cp": self.gt_rot_cp[idx],     # [T, num_controlpoints, 4]
-            "pseudo_gt_xyz_cp": self.pseudo_gt_xyz_cp[idx],  # [T, num_controlpoints, 3]
-            "pseudo_gt_rot_cp": self.pseudo_gt_rot_cp[idx],     # [T, num_controlpoints, 4]
-            "pseudo_gt": self.pseudo_gt[idx]     # [T, num_controlpoints, 7]    
+            "pseudo_gt_xyz_cp": self.pseudo_gt_xyz_cp[idx] if self.pseudo_gt_xyz_cp is not None else None,  # [T, num_controlpoints, 3]
+            "pseudo_gt_rot_cp": self.pseudo_gt_rot_cp[idx] if self.pseudo_gt_rot_cp is not None else None,     # [T, num_controlpoints, 4]
+            "pseudo_gt": self.pseudo_gt[idx] if self.pseudo_gt is not None else None     # [T, num_controlpoints, 7]    
         }

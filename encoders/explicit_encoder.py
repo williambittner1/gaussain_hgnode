@@ -107,6 +107,16 @@ class ExplicitEncoder(torch.nn.Module):
             
             # Concatenate to form state: [position, quaternion, velocity, angular velocity] => [N, 13]
             state = torch.cat([p0, q0, v, omega], dim=-1)  # [N, 13]
+
+
+            # Add 1 static conditioning feature (object id) per control point.
+            N = state.shape[0]
+            object_ids = torch.arange(N, device=state.device, dtype=state.dtype).unsqueeze(-1)  # [N, 1]
+            state = torch.cat([state, object_ids], dim=-1)  # [N, 14]
+            
+
+
+
             batch_states.append(state)
         
         # Stack the states into a batch: [B, N, 13]
