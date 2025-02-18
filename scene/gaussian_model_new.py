@@ -228,6 +228,46 @@ class GaussianModel:
         self._rotation = new_rotations.to(self.device)
 
 
+    def update_gaussians(self, gt_xyz_cp, gt_rot_cp):
+        """
+        Update each child Gaussian's absolute transformation based on input control points.
+        
+        Args:
+            gt_xyz_cp: Tensor of shape [num_objects, 3] containing control point positions
+            gt_rot_cp: Tensor of shape [num_objects, 4] containing control point quaternions
+        
+        This function uses the following stored attributes:
+        - self.cluster_label: Tensor of shape [N, 1] with the cluster (control point) index for each Gaussian
+        - self.xyz_rel: Tensor of shape [N, 3] storing each Gaussian's offset
+        - self.rot_rel: Tensor of shape [N, 4] storing each Gaussian's relative rotation
+        
+        Updates the internal parameters:
+        - self._xyz (positions)
+        - self._rotation (rotations)
+        """
+        self.xyz_cp = gt_xyz_cp.to(self.device)
+        self.rot_cp = gt_rot_cp.to(self.device)
+
+        labels = self.cluster_label.squeeze()  # shape: (N,)
+        
+        # Gather the corresponding control point positions and orientations
+        control_positions = self.xyz_cp[labels]          # shape: (N, 3)
+        control_orientations = self.rot_cp[labels]       # shape: (N, 4)
+        
+        # Rotate the stored relative positions
+        rotated_rel_positions = rotate_vector(control_orientations, self.xyz_rel)
+        
+        # Update absolute positions
+        new_positions = control_positions + rotated_rel_positions
+        
+        # Update absolute rotations
+        new_rotations = quaternion_multiply(control_orientations, self.rot_rel)
+        
+        # Update the internal Gaussian parameters
+        self._xyz = new_positions.to(self.device)
+        self._rotation = new_rotations.to(self.device)
+
+
     def setup_functions(self):
         
         self.scaling_activation             = torch.exp

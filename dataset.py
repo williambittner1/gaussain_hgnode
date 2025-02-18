@@ -58,12 +58,23 @@ class ControlPointDataset(Dataset):
     def __init__(self, gt_xyz_cp, gt_rot_cp):
         self.gt_xyz_cp = gt_xyz_cp
         self.gt_rot_cp = gt_rot_cp
+        self.pseudo_gt_xyz_cp = None
+        self.pseudo_gt_rot_cp = None
+        self.pseudo_gt = None
 
+    def set_pseudo_gt(self, pseudo_gt_xyz_cp, pseudo_gt_rot_cp):
+        self.pseudo_gt_xyz_cp = pseudo_gt_xyz_cp # [B, T, N, 3]
+        self.pseudo_gt_rot_cp = pseudo_gt_rot_cp # [B, T, N, 4]
+        self.pseudo_gt = torch.cat([self.pseudo_gt_xyz_cp, self.pseudo_gt_rot_cp], dim=-1) # [B, T, N, 7]
+        
     def __len__(self):
         return self.gt_xyz_cp.shape[0]
 
     def __getitem__(self, idx):
         return {
             "gt_xyz_cp": self.gt_xyz_cp[idx],  # [T, num_controlpoints, 3]
-            "gt_rot_cp": self.gt_rot_cp[idx]     # [T, num_controlpoints, 4]
+            "gt_rot_cp": self.gt_rot_cp[idx],     # [T, num_controlpoints, 4]
+            "pseudo_gt_xyz_cp": self.pseudo_gt_xyz_cp[idx],  # [T, num_controlpoints, 3]
+            "pseudo_gt_rot_cp": self.pseudo_gt_rot_cp[idx],     # [T, num_controlpoints, 4]
+            "pseudo_gt": self.pseudo_gt[idx]     # [T, num_controlpoints, 7]    
         }
