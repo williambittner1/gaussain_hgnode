@@ -181,7 +181,7 @@ def createCamObject(args, camera_info):
         image_name=camera_info.frames[0].image_name,
         uid=camera_info.uid,
         semantic_feature=gt_semantic_feature,  # This could be None if no features are available
-        data_device=args.experiment.data_device
+        data_device=args.experiment.device
     )
 
 

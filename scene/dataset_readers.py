@@ -22,9 +22,10 @@ import json
 from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
-from scene.gaussian_model_1 import BasicPointCloud
+from scene.gaussian_model_inria import BasicPointCloud
 import torch
 from collections import defaultdict
+import cv2
 
 import os
 import json
@@ -470,7 +471,7 @@ def fetchPly(path):
     plydata = PlyData.read(path)
     vertices = plydata['vertex']
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
-    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T #/ 255.0
+    colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
@@ -592,6 +593,223 @@ def group_frames_by_camera_uid(scene_info):
     return modified_scene_info
 
 
+def readStaticCamerasFromTransforms(path, transformsfile, white_background, semantic_feature_root_folder=None, extension=".png"):
+    cam_infos = []
+
+    with open(os.path.join(path, transformsfile)) as json_file:
+        contents = json.load(json_file)
+
+        # Retrieve the camera parameters from the JSON file
+        width = contents["w"]
+        height = contents["h"]
+
+        # Extract the intrinsic matrix K
+        K = np.array(contents["k"])[0]
+
+        # Extract the focal lengths
+        fx = K[0, 0]
+        fy = K[1, 1]
+
+        # Compute horizontal and vertical FoV in degrees
+        FoVx = 2 * np.arctan(width / (2 * fx)) # * 180 / np.pi
+        FoVy = 2 * np.arctan(height / (2 * fy))# * 180 / np.pi
+
+        filenames = contents.get("static_fn", [])
+
+        # Get camera world-to-camera matrices
+        w2c_matrices = contents.get("w2c", [])
+        c2w_matrices = contents.get("c2w", [])
+
+        for idx, c2w_matrix in enumerate(c2w_matrices):
+            cam_name = f"cam_{idx:03d}"  # Camera name with leading zeros
+
+            # Convert w2c_matrix to numpy array
+            c2w = np.array(c2w_matrix)
+            
+            # Change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+            c2w[:3, 1:3] *= -1
+
+            # Get the world-to-camera transform and set R, T
+            w2c = np.linalg.inv(c2w)
+            R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+            T = w2c[:3, 3]
+
+
+            # Construct the image file path
+            image_path = os.path.join(path, "static", cam_name + extension)
+            image_name = Path(cam_name).stem
+
+            static_img_path = filenames[idx]
+            image_path = static_img_path
+            # Load image
+            try:
+                image = Image.open(image_path).convert("RGB")
+            except Exception as e:
+                print(f"Error loading image {image_path}: {e}. Skipping this image.")
+                continue
+
+            # Handle background and alpha channel
+            im_data = np.array(image.convert("RGBA"))
+            bg = np.array([1, 1, 1]) if white_background else np.array([0, 0, 0])
+            norm_data = im_data / 255.0
+            arr = norm_data[:, :, :3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+            image = Image.fromarray((arr * 255.0).astype(np.uint8), "RGB")
+
+            # Prepare frame information
+            frames = []
+            frame_info = FrameInfo(
+                uid=idx,
+                image=image,
+                image_path=image_path,
+                image_name=image_name,
+                width=image.width,
+                height=image.height,
+                semantic_feature=None,
+                semantic_feature_path=None,
+                semantic_feature_name=None,
+                time=None
+            )
+            frames.append(frame_info)
+
+            # Process semantic features if provided (ensure paths are correct)
+
+            # Create CameraInfo object
+            cam_info = CameraInfo(
+                uid=idx,
+                R=R,
+                T=T,
+                FoVy=FoVy,
+                FoVx=FoVx,
+                frames=frames
+            )
+            cam_infos.append(cam_info)
+
+    return cam_infos
+
+def readDynamicCamerasFromTransforms(path, transformsfile, white_background, semantic_feature_root_folder=None, extension=".jpg"):
+    """
+    Reads the transforms JSON file (e.g., train_meta.json) that now stores video information
+    instead of image filenames. For each entry in the file, we extract the video path and 
+    timestep, load that frame as a PIL image, and group frames by camera ID.
+    """
+
+    print(f"Reading cameras from {path} with {transformsfile}")
+    # Open and load the transforms file
+    meta_path = os.path.join(path, transformsfile)
+    with open(meta_path, 'r') as json_file:
+        contents = json.load(json_file)
+
+    # Basic resolution info (assuming all frames share the same width and height)
+    width = contents["w"]
+    height = contents["h"]
+
+    # For intrinsics, we assume either a single matrix or per-frame matrices.
+    # Here we assume all frames share the same K.
+    K = np.array(contents["k"][0]) if isinstance(contents["k"], list) else np.array(contents["k"])
+    fx = K[0, 0]
+    fy = K[1, 1]
+    FoVx = 2 * np.arctan(width / (2 * fx))
+    FoVy = 2 * np.arctan(height / (2 * fy))
+
+    # Retrieve lists from the JSON (all lists should have the same length)
+    w2c_list = contents.get("w2c", [])
+    c2w_list = contents.get("c2w", [])
+    k_list   = contents.get("k", [])
+    cam_id_list = contents.get("cam_id", [])
+    fn_list  = contents.get("fn", [])  # Now each element is a dict with "video_path" and "timestep"
+
+    # Group frames by camera ID
+    frames_by_cam = defaultdict(list)
+    total_frames = len(cam_id_list)
+    for idx in range(total_frames):
+        cam_id = str(cam_id_list[idx])
+        frame_data = {
+            "w2c": w2c_list[idx],
+            "c2w": c2w_list[idx],
+            "k": np.array(k_list[idx]) if len(k_list) > 1 else K,
+            "fn": fn_list[idx]  # Expecting dict: {"video_path": ..., "timestep": ...}
+        }
+        frames_by_cam[cam_id].append(frame_data)
+
+    # Sort frames for each camera by their timestep
+    for cam_id, frames in frames_by_cam.items():
+        frames.sort(key=lambda f: f["fn"]["timestep"])
+
+    # Now build CameraInfo objects
+    cam_infos = []
+    uid_global = 0  # Unique id counter for all frames
+    for cam_id in sorted(frames_by_cam.keys(), key=lambda x: int(x)):
+        print(f"Processing camera {cam_id}")
+        camera_frames = []
+        frame_datas = frames_by_cam[cam_id]
+        for frame_data in frame_datas:
+            video_path = frame_data["fn"]["video_path"]
+            timestep = frame_data["fn"]["timestep"]
+
+            # Open video capture, seek to the desired frame, and read it
+            cap = cv2.VideoCapture(video_path)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, timestep)
+            ret, frame_img = cap.read()
+            cap.release()
+            if not ret:
+                print(f"Warning: Could not read frame {timestep} from video {video_path}. Skipping this frame.")
+                continue
+
+            # Convert the frame from BGR (OpenCV format) to RGB and create a PIL Image
+            frame_img = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame_img)
+
+            # Optionally handle background adjustments if needed.
+            # (Here you could add similar logic as in your original code for handling alpha channels.)
+
+            # Process extrinsics: use the provided c2w matrix, and adjust axes as before.
+            c2w = np.array(frame_data["c2w"])
+            # Adjust from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+            c2w[:3, 1:3] *= -1
+            w2c = np.linalg.inv(c2w)
+            R = np.transpose(w2c[:3, :3])
+            T = w2c[:3, 3]
+
+            # Create a FrameInfo object.
+            # Here we use video_path as image_path and encode the timestep in image_name.
+            frame_info = FrameInfo(
+                uid=uid_global,
+                image=image,
+                image_path=video_path,
+                image_name=f"{cam_id}_{timestep:04d}",
+                width=image.width,
+                height=image.height,
+                semantic_feature=None,
+                semantic_feature_path=None,
+                semantic_feature_name=None,
+                time=timestep
+            )
+            uid_global += 1
+            camera_frames.append(frame_info)
+
+        # Skip cameras with no valid frames
+        if len(camera_frames) == 0:
+            continue
+
+        # For the CameraInfo, you can choose to use the extrinsics from the first frame
+        first_frame_data = frame_datas[0]
+        c2w_first = np.array(first_frame_data["c2w"])
+        c2w_first[:3, 1:3] *= -1
+        w2c_first = np.linalg.inv(c2w_first)
+        R_cam = np.transpose(w2c_first[:3, :3])
+        T_cam = w2c_first[:3, 3]
+
+        cam_info = CameraInfo(
+            uid=int(cam_id),
+            R=R_cam,
+            T=T_cam,
+            FoVy=FoVy,
+            FoVx=FoVx,
+            frames=camera_frames
+        )
+        cam_infos.append(cam_info)
+
+    return cam_infos
 
 
 def readCamerasFromTransforms(path, transformsfile, white_background, semantic_feature_root_folder=None, extension=".jpg"):
@@ -1156,8 +1374,8 @@ def readBlenderSyntheticInfo(path, white_background, foundation_model=None):
     use_semantic_features = bool(semantic_feature_dir)
 
     print("Reading Transforms")
+    # cam_infos = readCamerasFromTransforms(path, "train_meta.json", white_background, semantic_feature_root_folder=None)
     cam_infos = readCamerasFromTransforms(path, "train_meta.json", white_background, semantic_feature_root_folder=None)
-    # cam_infos = readCamerasFromTransforms_original(path, "train_meta.json", white_background, semantic_feature_root_folder=None)
 
     nerf_normalization = getNerfppNorm(cam_infos)
 
@@ -1169,6 +1387,49 @@ def readBlenderSyntheticInfo(path, white_background, foundation_model=None):
         
         # We create random points inside the bounds of the synthetic Blender scenes
         xyz = np.random.random((num_pts, 3)) * 6 - 3
+        shs = np.random.random((num_pts, 3)) / 255.0
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+
+        storePly(ply_path, xyz, SH2RGB(shs) * 255)
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    semantic_feature_dim = cam_infos[0].semantic_features[0].shape[0] if use_semantic_features and cam_infos[0].semantic_features else 0
+    scene_info = SceneInfo(point_cloud=pcd,
+                        cameras=cam_infos,
+                        nerf_normalization=nerf_normalization,
+                        ply_path=ply_path,
+                        semantic_feature_dim=semantic_feature_dim) 
+    return scene_info
+
+
+def readStaticBlenderSyntheticInfo(path, white_background, foundation_model=None):
+
+    if foundation_model == 'sam':
+        semantic_feature_dir = "sam_embeddings"
+    elif foundation_model == 'lseg':
+        semantic_feature_dir = "rgb_feature_langseg"
+    else:
+        semantic_feature_dir = ""
+
+    use_semantic_features = bool(semantic_feature_dir)
+
+    print("Reading Transforms")
+    cam_infos = readStaticCamerasFromTransforms(path, "train_static_meta.json", white_background, semantic_feature_root_folder=None)
+    # cam_infos = readCamerasFromTransforms_original(path, "train_meta.json", white_background, semantic_feature_root_folder=None)
+
+    nerf_normalization = getNerfppNorm(cam_infos)
+
+    ply_path = os.path.join(path, "points3D.ply")
+    if not os.path.exists(ply_path):
+        # Since this data set has no colmap data, we start with random points
+        num_pts = 10_000
+        print(f"Generating random point cloud ({num_pts})...")
+        
+        # We create random points inside the bounds of the synthetic Blender scenes
+        xyz = np.random.random((num_pts, 3)) * 60 - 30
         shs = np.random.random((num_pts, 3)) / 255.0
         pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
@@ -1204,7 +1465,7 @@ def readNerfSyntheticInfo(path, foundation_model, white_background, eval, extens
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
-    ply_path = os.path.join(path, "points3d.ply")
+    ply_path = os.path.join(path, "points3D.ply")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
         num_pts = 100_000

@@ -410,6 +410,33 @@ class GaussianModel:
         self._rotation = gt_rot
 
 
+    def sparsify(self, sparsify_factor: float):
+        """
+        Randomly keep a fraction of the gaussians and delete the rest.
+        
+        Args:
+            sparsify_factor (float): Fraction of gaussians to keep (e.g., 0.3 means keep 30%).
+        """
+        # Get total number of gaussians
+        num_points = self.get_xyz.shape[0]
+        # Calculate number of points to keep
+        num_keep = int(sparsify_factor * num_points)
+        
+        if num_keep <= 0 or num_keep > num_points:
+            raise ValueError("sparsify_factor must be in the range (0, 1].")
+        
+        # Create a random permutation of indices and select the first num_keep indices
+        perm = torch.randperm(num_points, device=self.device)
+        keep_indices = perm[:num_keep]
+        
+        # Create a boolean mask where True indicates the gaussian should be deleted.
+        # Mark all indices as True (to delete), then set the kept indices to False.
+        mask = torch.ones(num_points, dtype=torch.bool, device=self.device)
+        mask[keep_indices] = False
+        
+        # Use the existing prune_points method to remove the gaussians
+        self.prune_points(mask)
+
     def training_setup_0(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -431,7 +458,7 @@ class GaussianModel:
                                                     lr_delay_mult   = training_args.position_lr_delay_mult,
                                                     max_steps       = training_args.position_lr_max_steps)
 
-    def training_setup_t(self, training_args):
+    def training_setup_t_old(self, training_args):
         self._xyz.requires_grad = True
         self._rotation.requires_grad = True
         self._opacity.requires_grad = False
@@ -449,6 +476,23 @@ class GaussianModel:
         #                                             lr_final        = training_args.position_lr_final * self.spatial_lr_scale,
         #                                             lr_delay_mult   = training_args.position_lr_delay_mult,
         #                                             max_steps       = training_args.position_lr_max_steps)
+
+    def training_setup_t(self, training_args):
+        self._xyz = nn.Parameter(self._xyz.detach(), requires_grad=True)
+        self._rotation = nn.Parameter(self._rotation.detach(), requires_grad=True)
+        self._opacity = nn.Parameter(self._opacity.detach(), requires_grad=False)
+        self._scaling = nn.Parameter(self._scaling.detach(), requires_grad=False)
+        self._features_dc = nn.Parameter(self._features_dc.detach(), requires_grad=False)
+        self._features_rest = nn.Parameter(self._features_rest.detach(), requires_grad=False)
+        self._semantic_feature = nn.Parameter(self._semantic_feature.detach(), requires_grad=False)
+
+        if self.optimizer is None:
+            l = [
+                {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+                {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
+            ]
+            self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+            
 
     def get_initial_parameters(self):
         """
@@ -651,6 +695,17 @@ class GaussianModel:
         return optimizable_tensors
 
     def _prune_optimizer(self, mask):
+        if self.optimizer is None:
+        # Directly prune internal tensors without touching the optimizer state.
+            return {
+                "xyz": self._xyz[mask],
+                "f_dc": self._features_dc[mask],
+                "f_rest": self._features_rest[mask],
+                "opacity": self._opacity[mask],
+                "scaling": self._scaling[mask],
+                "rotation": self._rotation[mask],
+                "semantic_feature": self._semantic_feature[mask]
+            }
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -670,6 +725,7 @@ class GaussianModel:
 
     def prune_points(self, mask):
         valid_points_mask = ~mask
+        
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
@@ -789,12 +845,60 @@ class GaussianModel:
         torch.cuda.empty_cache()
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
+        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[0,update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
 
-    
-
+        
     def clone(self):
+        new_gaussian = GaussianModel(self.max_sh_degree)
+        new_gaussian.active_sh_degree = self.active_sh_degree
+        new_gaussian.spatial_lr_scale = self.spatial_lr_scale
+
+        # Helper to clone and detach tensors so they become leaf nodes.
+        def clone_tensor(tensor):
+            if isinstance(tensor, nn.Parameter):
+                return nn.Parameter(tensor.detach().clone(), requires_grad=tensor.requires_grad)
+            else:
+                return tensor.detach().clone()
+        
+        new_gaussian.cluster_label = clone_tensor(self.cluster_label) if self.cluster_label is not None else None
+        new_gaussian._xyz = clone_tensor(self._xyz)
+        new_gaussian._features_dc = clone_tensor(self._features_dc)
+        new_gaussian._features_rest = clone_tensor(self._features_rest)
+        new_gaussian._scaling = clone_tensor(self._scaling)
+        new_gaussian._rotation = clone_tensor(self._rotation)
+        new_gaussian._opacity = clone_tensor(self._opacity)
+        new_gaussian.max_radii2D = clone_tensor(self.max_radii2D)
+        new_gaussian.xyz_gradient_accum = clone_tensor(self.xyz_gradient_accum)
+        new_gaussian.denom = clone_tensor(self.denom)
+        new_gaussian._semantic_feature = clone_tensor(self._semantic_feature)
+
+        if self.initial_xyz is not None:
+            new_gaussian.initial_xyz = clone_tensor(self.initial_xyz)
+        
+        if hasattr(self, 'xyz_rel') and self.xyz_rel is not None:
+            new_gaussian.xyz_rel = clone_tensor(self.xyz_rel)
+        
+        if hasattr(self, 'rot_rel') and self.rot_rel is not None:
+            new_gaussian.rot_rel = clone_tensor(self.rot_rel)
+        
+        if hasattr(self, 'cluster_label') and self.cluster_label is not None:
+            new_gaussian.cluster_label = clone_tensor(self.cluster_label)
+        
+        if hasattr(self, 'xyz_cp') and self.xyz_cp is not None:
+            new_gaussian.xyz_cp = clone_tensor(self.xyz_cp)
+        
+        if hasattr(self, 'rot_cp') and self.rot_cp is not None:
+            new_gaussian.rot_cp = clone_tensor(self.rot_cp)
+        
+        # Copy other necessary attributes and setup functions
+        new_gaussian.setup_functions()
+        
+        return new_gaussian
+
+
+
+    def clone_old(self):
         new_gaussian = GaussianModel(self.max_sh_degree)
         new_gaussian.active_sh_degree = self.active_sh_degree
         new_gaussian.spatial_lr_scale = self.spatial_lr_scale

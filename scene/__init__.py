@@ -4,23 +4,27 @@ import torch
 import torch.nn as nn
 import os
 
-from scene.gaussian_model_new import GaussianModel
+from scene.gaussian_model import GaussianModel
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 from scene.cameras import Camera
-from scene.dataset_readers import readBlenderSyntheticInfo, readNerfSyntheticInfo
+from scene.dataset_readers import readBlenderSyntheticInfo, readNerfSyntheticInfo, readStaticBlenderSyntheticInfo
 from utils.camera_utils import cameraObjects_from_cameraInfos
 
 
 class Scene:
-    def __init__(self, config, dataset=None):
+    def __init__(self, config, scene_path=None):
         """Initialize an empty scene or from a dataset."""
         self.gaussians = None
         self.train_cameras = {}
         self.test_cameras = {}
         self.scene_type = "manual"
-
-        self.dataset_path = config.experiment.data_path
-        self.scene_info = readBlenderSyntheticInfo(self.dataset_path, white_background=False)
+        # old
+        # self.dataset_path = config.experiment.data_path
+        # self.scene_info = readBlenderSyntheticInfo(self.dataset_path, white_background=False)
+        # new
+        self.dataset_path = scene_path
+        self.scene_info = readStaticBlenderSyntheticInfo(self.dataset_path, white_background=False)
+        
         #self.scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.foundation_model, args.white_background, args.eval)
         # self.scene_info = readNerfSyntheticInfo(self.dataset_path, foundation_model=None, white_background=False, eval=False, extension=".jpg")
         self.cameras_extent = self.scene_info.nerf_normalization["radius"]

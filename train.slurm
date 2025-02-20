@@ -21,7 +21,7 @@ module load all/CUDA/11.7.0
 source ~/.bashrc
 
 # Activate your virtual environment (crucial!)
-source /users/williamb/miniconda3/bin/activate gaussian_splatting_athena
+source /users/williamb/miniconda3/bin/activate gsplat_gnode
 
 # Run your Python script with full path
 python /users/williamb/dev/gaussain_hgnode/train_version_c.py 

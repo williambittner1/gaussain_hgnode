@@ -19,12 +19,13 @@ import random
 import cv2
 
 from scene import Scene, GaussianModel
-from gaussian_renderer import render
+from gaussian_renderer_gsplat import render, render_batch
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
 from encoders.explicit_encoder import ExplicitEncoder
 from models.gnode import GraphNeuralODE
+from models.gnode_augmented import AugmentedGraphNeuralODE
 from double_pendulum import DoublePendulum2DPolarDynamics, generate_initial_conditions_polar_2d, polar_to_cartesian_2d
 
 from dataset import PreRenderedGTDataset, ControlPointDataset
@@ -98,7 +99,7 @@ class PipelineConfig:
 @dataclass
 class ExperimentConfig:
     device: torch.device = torch.device("cuda")
-    learning_rate: float = 1e-3
+    learning_rate: float = 1e-4
     num_epochs: int = 300000
     viz_iter: int = 1000
     eval_iter: int = 10
@@ -113,7 +114,7 @@ class ExperimentConfig:
     num_samples_eval: int = 10
     num_initial_train_time_samples: int = 5
     train_samples_step: int = 1
-    loss_threshold: float = 1e-5
+    loss_threshold: float = 1e-7
     num_train_data_sequences: int = 2
     num_test_data_sequences: int = 1
     use_all_segments: bool = False
@@ -126,9 +127,10 @@ class ExperimentConfig:
     batch_size: int = 1
     num_sequences: int = 1    # number of sequences to simulate
     photometric_loss_length: int = 1
-    num_train_cams: int = 3
-    wandb_name: str = "1_seq_13_dynfeats_1_condfeats_test_iter_10"
-    test_length: int = 100
+    num_train_cams: int = 10
+    wandb_name: str = f"{num_sequences}_seq_{batch_size}_bs_{num_train_cams}_Augmented_GNODE_no_z0_offset_1e-8_loss_threshold_overwrite_pseudo_gt"
+    # wandb_name: str = "1_seq_new_update_pseudo_gt_test"
+    test_length: int = 10
     test_iter: int = 10
 
 @dataclass
@@ -140,10 +142,11 @@ class Config:
 
 
 
-# def select_random_camera(scene):
-#     cam_stack = scene.getTrainCameraObjects()
-#     viewpoint_cam = cam_stack[randint(0, len(cam_stack) - 1)]
-#     return viewpoint_cam
+def select_random_camera(scene):
+    cam_stack = scene.getTrainCameraObjects()
+    viewpoint_cam = cam_stack[randint(0, len(cam_stack) - 1)]
+    return viewpoint_cam
+
 
 
 def simulate_dynamic_controlpoints_double_pendulum(dynamics_model, dt, total_timesteps, L1, L2, device, num_sequences=1, seed=0):
@@ -206,8 +209,10 @@ def simulate_dynamic_controlpoints_double_pendulum(dynamics_model, dt, total_tim
     q_mass1 = angle_to_quaternion(theta1.unsqueeze(-1))  # [B, T, 4]
     
     # Compute quaternion for mass2 using theta1 + theta2.
-    q_mass2 = angle_to_quaternion((theta1 + theta2).unsqueeze(-1))  # [B, T, 4]
-    
+    q_mass2 = angle_to_quaternion((theta2).unsqueeze(-1))  # [B, T, 4]
+
+
+
     # Stack the control rotations into a tensor of shape [B, T, num_controlpoints, 4]
     ctrl_rotations = torch.cat([q_anchor, q_mass1, q_mass2], dim=2)  # [B, T, 3, 4]
     
@@ -240,7 +245,7 @@ def train_static_gaussian_model(scene, config, iterations = 30000):
     progress_bar = tqdm(range(iterations), desc=f"Training")
     for iteration in range(iterations):
         
-        viewpoint_cam = select_random_camera(scene)
+        viewpoint_cam = select_random_camera(scene.train_camera_objects)
 
         gt_image = viewpoint_cam.original_image.permute(2,0,1)
 
@@ -347,7 +352,7 @@ def log_wandb_video(epoch, config, model, z0_objects, t_span, current_segment_le
         tmp_gaussians_gt = gaussians_template.clone()
         z_traj = model(z0_objects, t_span)
 
-        for b in range(min(4, gt_xyz_cp.shape[0])):
+        for b in range(min(2, gt_xyz_cp.shape[0])):
             combined_video_frames_dict = {cam_idx: [] for cam_idx in range(len(wandb_cam_stack))}
 
             for t in range(current_segment_length):
@@ -379,17 +384,17 @@ def log_wandb_video(epoch, config, model, z0_objects, t_span, current_segment_le
                     combined_frame = np.concatenate([pred_np, white_line, gt_np], axis=1)
                     
                     # Overlay the frame number in the top-right corner.
-                    frame_text = f"Frame: {t}"
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 0.7  # smaller font scale
-                    thickness = 2
-                    text_size, _ = cv2.getTextSize(frame_text, font, font_scale, thickness)
-                    text_w, text_h = text_size
-                    pos = (combined_frame.shape[1] - text_w - 10, text_h + 10)
-                    # First, draw a black outline for better contrast.
-                    cv2.putText(combined_frame, frame_text, pos, font, font_scale, (0, 0, 0), thickness+2, cv2.LINE_AA)
-                    # Then, draw the white text.
-                    cv2.putText(combined_frame, frame_text, pos, font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+                    # frame_text = f"Frame: {t}"
+                    # font = cv2.FONT_HERSHEY_SIMPLEX
+                    # font_scale = 0.7  # smaller font scale
+                    # thickness = 2
+                    # text_size, _ = cv2.getTextSize(frame_text, font, font_scale, thickness)
+                    # text_w, text_h = text_size
+                    # pos = (combined_frame.shape[1] - text_w - 10, text_h + 10)
+                    # # First, draw a black outline for better contrast.
+                    # cv2.putText(combined_frame, frame_text, pos, font, font_scale, (0, 0, 0), thickness+2, cv2.LINE_AA)
+                    # # Then, draw the white text.
+                    # cv2.putText(combined_frame, frame_text, pos, font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
                     
                     combined_video_frames_dict[cam_idx].append(combined_frame)
             # For each camera, stack frames and log the video to wandb.
@@ -405,7 +410,7 @@ def log_wandb_video(epoch, config, model, z0_objects, t_span, current_segment_le
 
 
 
-def update_pseudo_gt(cp_dataset, config, device, gaussians_template, encoder, model, current_segment_length):
+def update_pseudo_gt_with_current_model_prediction(cp_dataset, config, device, gaussians_template, encoder, model, current_segment_length):
     """
     Update the pseudo–3D ground truth for all sequences in the dataset.
     This function loops over the entire cp_dataset (which may have many sequences)
@@ -432,7 +437,8 @@ def update_pseudo_gt(cp_dataset, config, device, gaussians_template, encoder, mo
             g1 = g0.clone()
             g1.update_gaussians(batch_gt_xyz_cp[b, 1, :, :], batch_gt_rot_cp[b, 1, :, :])
             gaussians_t1_list.append(g1)
-        z0_objects = encoder(gaussians_t0_list, gaussians_t1_list)
+        z0_objects_noisy = encoder(gaussians_t0_list, gaussians_t1_list)
+        z0_objects = z0_objects_noisy #+ model.z0_offset * 0.01
         z_traj = model(z0_objects, t_span).detach()  # [B, T, N, D]
         pseudo_gt_xyz = z_traj[:, :, :, :3]
         pseudo_gt_rot = z_traj[:, :, :, 3:7]
@@ -442,6 +448,91 @@ def update_pseudo_gt(cp_dataset, config, device, gaussians_template, encoder, mo
     new_pseudo_gt_rot = torch.cat(pseudo_gt_rot_list, dim=0)
     cp_dataset.set_pseudo_gt(new_pseudo_gt_xyz, new_pseudo_gt_rot)
     print("[update_pseudo_gt] Pseudo ground truth updated.")
+
+def overwrite_pseudo_gt(cp_dataset, config, device, gaussians_template, encoder, model, current_segment_length):
+    """
+    Overwrite the pseudo ground truth with the current full prediction.
+    
+    Instead of appending the most recent timestep to the existing pseudo GT,
+    this function replaces the entire pseudo GT trajectory with the model's prediction.
+    
+    Args:
+        cp_dataset: Dataset object with methods get/set pseudo_gt.
+        config: Configuration object.
+        device: Torch device.
+        gaussians_template: Template Gaussian model.
+        encoder: Encoder network.
+        model: The GNODE (or augmented GNODE) model.
+        current_segment_length: The current prediction horizon (number of timesteps).
+    """
+    new_xyz_list, new_rot_list = [], []
+    pseudo_loader = DataLoader(cp_dataset, batch_size=config.experiment.batch_size, shuffle=False)
+    segment_duration = current_segment_length / config.optimization.framerate
+    t_span = torch.linspace(0, segment_duration, current_segment_length, device=device, dtype=torch.float32)
+
+    for batch in pseudo_loader:
+        batch_gt_xyz_cp = batch["gt_xyz_cp"].to(device)
+        batch_gt_rot_cp = batch["gt_rot_cp"].to(device)
+        gaussians_t0_list, gaussians_t1_list = [], []
+        for b in range(batch_gt_xyz_cp.shape[0]):
+            g0 = gaussians_template.clone()
+            g0.update_gaussians(batch_gt_xyz_cp[b, 0, :, :], batch_gt_rot_cp[b, 0, :, :])
+            gaussians_t0_list.append(g0)
+            g1 = g0.clone()
+            g1.update_gaussians(batch_gt_xyz_cp[b, 1, :, :], batch_gt_rot_cp[b, 1, :, :])
+            gaussians_t1_list.append(g1)
+        # Compute the full trajectory prediction: shape [B, T, N, D]
+        z_traj = model(encoder(gaussians_t0_list, gaussians_t1_list), t_span).detach()
+        # Extract pseudo ground truth components from the full trajectory:
+        # For example, if the explicit state has [xyz, rot, ...], we take the first 7 dimensions.
+        new_xyz_list.append(z_traj[..., :3].cpu())  # positions
+        new_rot_list.append(z_traj[..., 3:7].cpu())   # rotations
+
+    # Concatenate predictions from all batches.
+    new_pseudo_gt_xyz = torch.cat(new_xyz_list, dim=0)  # shape [B_total, T, N, 3]
+    new_pseudo_gt_rot = torch.cat(new_rot_list, dim=0)    # shape [B_total, T, N, 4]
+    
+    # Overwrite the dataset's pseudo GT.
+    cp_dataset.set_pseudo_gt(new_pseudo_gt_xyz, new_pseudo_gt_rot)
+
+def update_pseudo_gt(cp_dataset, config, device, gaussians_template, encoder, model, current_segment_length):
+    """
+    Append the prediction at the last timestep to the existing pseudo ground truth.
+    """
+
+    new_xyz_list, new_rot_list = [], []
+    pseudo_loader = DataLoader(cp_dataset, batch_size=config.experiment.batch_size, shuffle=False)
+    segment_duration = current_segment_length / config.optimization.framerate
+    t_span = torch.linspace(0, segment_duration, current_segment_length, device=device, dtype=torch.float32)
+
+    for batch in pseudo_loader:
+        batch_gt_xyz_cp = batch["gt_xyz_cp"].to(device)
+        batch_gt_rot_cp = batch["gt_rot_cp"].to(device)
+        gaussians_t0_list, gaussians_t1_list = [], []
+        for b in range(batch_gt_xyz_cp.shape[0]):
+            g0 = gaussians_template.clone()
+            g0.update_gaussians(batch_gt_xyz_cp[b, 0], batch_gt_rot_cp[b, 0])
+            gaussians_t0_list.append(g0)
+            g1 = g0.clone()
+            g1.update_gaussians(batch_gt_xyz_cp[b, 1], batch_gt_rot_cp[b, 1])
+            gaussians_t1_list.append(g1)
+        z_traj = model(encoder(gaussians_t0_list, gaussians_t1_list), t_span).detach()  # [B, T, N, D]
+        last_pred = z_traj[:, -1]  # [B, N, D]
+        new_xyz_list.append(last_pred[:, :, :3].cpu())
+        new_rot_list.append(last_pred[:, :, 3:7].cpu())
+
+    new_last_xyz = torch.cat(new_xyz_list, dim=0)  # [B_total, N, 3]
+    new_last_rot = torch.cat(new_rot_list, dim=0)    # [B_total, N, 4]
+
+    # Ensure the existing pseudo gt tensors are on the same device as new predictions.
+    current_xyz = cp_dataset.pseudo_gt_xyz_cp.to(device)
+    current_rot = cp_dataset.pseudo_gt_rot_cp.to(device)
+    updated_xyz = torch.cat([current_xyz, new_last_xyz.unsqueeze(1).to(device)], dim=1)
+    updated_rot = torch.cat([current_rot, new_last_rot.unsqueeze(1).to(device)], dim=1)
+
+    cp_dataset.set_pseudo_gt(updated_xyz, updated_rot)
+
+
 
 def process_batch(batch, config, device, gaussians_template, encoder, model, t_span, cam_stack, background, current_segment_length):
     """
@@ -498,34 +589,49 @@ def process_batch(batch, config, device, gaussians_template, encoder, model, t_s
             
             tmp_gaussians_pred.update_gaussians(z_traj[seq, t, :, :3],
                                                 z_traj[seq, t, :, 3:7])
-            # Build GT gaussians from batch data
             
-            tmp_gaussians_gt.update_gaussians(batch_gt_xyz_cp[seq, t, :, :],
-                                              batch_gt_rot_cp[seq, t, :, :])
-            # Choose a random camera for rendering (or loop over cam_stack if desired)
-            for cam_idx in range(1, 4):
-                # viewpoint_cam = random.choice(cam_stack)
-                viewpoint_cam = cam_stack[cam_idx]
-                # Render predicted image
-                render_pkg_pred = render(viewpoint_cam, tmp_gaussians_pred, config.pipeline, background)
-                pred_rendered_image = render_pkg_pred["render"]
+
+            viewpoint_cams = cam_stack[:config.experiment.num_train_cams]
+            render_pkg_pred = render_batch(viewpoint_cams, tmp_gaussians_pred, config.pipeline, background)
+            pred_rendered_image = render_pkg_pred["render"] # [Cameras, H, W, 3]
+            
+            # Build GT gaussians from batch data
+            with torch.no_grad():
+                tmp_gaussians_gt.update_gaussians(batch_gt_xyz_cp[seq, t, :, :],
+                                                  batch_gt_rot_cp[seq, t, :, :])            
                 
-                # Render GT image (with no gradient)
-                with torch.no_grad():
-                    render_pkg_gt = render(viewpoint_cam, tmp_gaussians_gt, config.pipeline, background)
-                    gt_rendered_image = render_pkg_gt["render"]
+                render_pkg_gt = render_batch(viewpoint_cams, tmp_gaussians_gt, config.pipeline, background)
+                gt_rendered_image = render_pkg_gt["render"] # [Cameras, H, W, 3]
+
+            
+            # # Choose a random camera for rendering (or loop over cam_stack if desired)
+            # for cam_idx in range(config.experiment.num_train_cams):
+            #     #viewpoint_cam = random.choice(cam_stack)
+            #     viewpoint_cam = cam_stack[cam_idx]
                 
-                loss_i = F.mse_loss(pred_rendered_image, gt_rendered_image)
-                loss_photo += loss_i
-                photo_count += 1
+            #     # Render predicted image
+            #     render_pkg_pred = render(viewpoint_cam, tmp_gaussians_pred, config.pipeline, background)
+            #     pred_rendered_image = render_pkg_pred["render"]
+                
+            #     # Render GT image (with no gradient)
+            #     with torch.no_grad():
+            #         render_pkg_gt = render(viewpoint_cam, tmp_gaussians_gt, config.pipeline, background)
+            #         gt_rendered_image = render_pkg_gt["render"]
+                
+            loss_i = F.mse_loss(pred_rendered_image, gt_rendered_image)
+            loss_photo += loss_i
+            photo_count += 1
 
     loss_photo = loss_photo / photo_count
+    pseudo_loss_weight = 1.0
+    photo_loss_weight = 5.0
+    # batch_loss = (loss_pseudo3d + loss_photo)/2
     batch_loss = (loss_pseudo3d * pseudo_loss_length + loss_photo * photometric_loss_length) / current_segment_length
     timing_info['render_time'] = time.time() - start
     # if timing_info['render_time'] > 0.1:
     #     print(f"Render time high: {timing_info['render_time']}")
 
-    return batch_loss, timing_info
+    return batch_loss, timing_info, loss_photo
 
 
 
@@ -617,15 +723,15 @@ def simulate_cp_set(config, device, num_sequences: int, seed_offset: int = 0):
     return gt_xyz_cp, gt_rot_cp
 
 
-def test_validation(model, encoder, test_cp_dataset, device, current_segment_length, config, gaussians_template):
+def test_validation(model, encoder, test_cp_dataset, device, test_length, config, gaussians_template):
     """
     Evaluate the model on a test dataset of control points using the ground truth.
     """
     model.eval()
     t_span = torch.linspace(
         0,
-        current_segment_length / config.optimization.framerate,
-        current_segment_length,
+        test_length / config.optimization.framerate,
+        test_length,
         device=device,
         dtype=torch.float32
     )
@@ -640,15 +746,15 @@ def test_validation(model, encoder, test_cp_dataset, device, current_segment_len
              batch_gt_rot_cp, _) = update_gaussians_from_batch(batch, gaussians_template, device)
             # Encode latent state z0.
             z0_objects = encoder(gaussians_t0_list, gaussians_t1_list)
-            t_test_span = torch.linspace(0, config.experiment.test_length / config.optimization.framerate, config.experiment.test_length, device=device, dtype=torch.float32)
+            t_test_span = torch.linspace(0, test_length / config.optimization.framerate, test_length, device=device, dtype=torch.float32)
             # Get predicted trajectory from model.
             z_traj = model(z0_objects, t_test_span)
             # Build the ground-truth tensor by concatenating positions and rotations.
             ground_truth = torch.cat([batch_gt_xyz_cp, batch_gt_rot_cp], dim=-1)  # shape: [B, T, N, 7]
             
             loss_gt = F.mse_loss(
-                z_traj[:, :config.experiment.test_length, :, :7],
-                ground_truth[:, :config.experiment.test_length, :, :]
+                z_traj[:, :test_length, :, :7],
+                ground_truth[:, :test_length, :, :]
             )
             total_loss += loss_gt.item()
             total_batches += 1
@@ -680,7 +786,7 @@ def train():
     # 0. Set up scene and empty gaussians
     ##########################################
 
-    scene = Scene(config=config, dataset=None)
+    scene = Scene(config=config, scene_path=None)
     scene.gaussians = GaussianModel(sh_degree=3)
 
 
@@ -689,17 +795,18 @@ def train():
     # 1. Load or train static gaussian model 
     ##########################################
 
-    if config.optimization.load_existing_gaussians:
-        gaussian_checkpoint = os.path.join(config.model.checkpoint_path, f"chkpnt{config.optimization.iterations}.pth")
-        scene.load_gaussians_from_checkpoint(gaussian_checkpoint, scene.gaussians, config.optimization)
+    # if config.optimization.load_existing_gaussians:
+    #     gaussian_checkpoint = os.path.join(config.model.checkpoint_path, f"chkpnt{config.optimization.iterations}.pth")
+    #     scene.load_gaussians_from_checkpoint(gaussian_checkpoint, scene.gaussians, config.optimization)
 
-    else:
-        scene = train_static_gaussian_model(scene, config, iterations=config.optimization.iterations)
-        os.makedirs(config.model.checkpoint_path, exist_ok=True)
-        torch.save(scene.gaussians.capture(), os.path.join(config.model.checkpoint_path, f"chkpnt{config.optimization.iterations}.pth"))
+    # else:
+    scene = train_static_gaussian_model(scene, config, iterations=config.optimization.iterations)
+    os.makedirs(config.model.checkpoint_path, exist_ok=True)
+    torch.save(scene.gaussians.capture(), os.path.join(config.model.checkpoint_path, f"chkpnt{config.optimization.iterations}.pth"))
 
 
     gaussians_t0 = scene.gaussians.clone()
+    # gaussians_t0.sparsify(0.1)
     gaussians_t0.training_setup_t(config.optimization)
 
 
@@ -765,7 +872,9 @@ def train():
 
     encoder = ExplicitEncoder()
 
-    
+    def count_trainable_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
     model = GraphNeuralODE(
         node_feature_dim=13,
         node_conditioning_dim=1,
@@ -779,6 +888,35 @@ def train():
         options={"max_num_steps": 200},
         device=device
     )
+
+    # model = GraphLatentNeuralODE(
+    #     explicit_dim=14,
+    #     latent_dim=64,
+    #     hidden_dim=256,
+    #     n_hidden_layers=4,
+    #     # solver="rk4",
+    #     # options={"step_size": 0.04},
+    #     solver="dopri5",
+    #     rtol=1e-2,
+    #     atol=1e-4,
+    #     options={"max_num_steps": 200},
+    #     device=device
+    # )
+
+
+    # model = AugmentedGraphNeuralODE(
+    #     original_dim=14,
+    #     hidden_dim=256,
+    #     n_hidden_layers=4,
+    #     solver="dopri5",
+    #     rtol=1e-3,
+    #     atol=1e-5,
+    #     options={"max_num_steps": 200},
+    #     device=device
+    # )
+    num_params = count_trainable_parameters(model)
+    print(f"Total trainable parameters: {num_params}")
+    wandb.log({"total_trainable_params": num_params})
 
     optimizer = optim.Adam(
         list(model.parameters()),
@@ -821,11 +959,11 @@ def train():
         segment_duration = current_segment_length / config.optimization.framerate
         t_span = torch.linspace(0, segment_duration, current_segment_length, device=device, dtype=torch.float32)
         
-
+        batch_photo_loss = 0.0
         for batch_idx, batch in enumerate(dataloader):
 
             # with autocast(device_type="cuda"):
-            batch_loss, timing_info = process_batch(batch, 
+            batch_loss, timing_info, loss_photo = process_batch(batch, 
                                                     config, 
                                                     device, 
                                                     gaussians_template, 
@@ -846,7 +984,7 @@ def train():
             optimizer.step()
             timing_info['backward_time'] = time.time() - start
 
-            
+            batch_photo_loss += loss_photo
             epoch_loss += batch_loss
 
         epoch_loss = epoch_loss / len(dataloader)
@@ -865,17 +1003,17 @@ def train():
 
 
         # Test Evaluation
-        if epoch % config.experiment.test_iter == 0:
+        if epoch > 0 and epoch % config.experiment.test_iter == 0:
             test_loss = test_validation(model, encoder, test_cp_dataset, device, current_segment_length, config, gaussians_template)
             log.update({"test_loss": test_loss})
             
         # Test Video
-        if epoch % 500 == 0:
+        if epoch > 0 and epoch % 500 == 0:
             first_batch = next(iter(test_dataloader))
             (gaussians_t0_list, gaussians_t1_list, batch_gt_xyz_cp, batch_gt_rot_cp, _) = update_gaussians_from_batch(first_batch, gaussians_template, device)
             z0_objects = encoder(gaussians_t0_list, gaussians_t1_list)
 
-            t_test_span = torch.linspace(0, config.experiment.test_length / config.optimization.framerate, config.experiment.test_length, device=device, dtype=torch.float32)
+            t_test_span = torch.linspace(0, current_segment_length / config.optimization.framerate, current_segment_length, device=device, dtype=torch.float32)
             log_wandb_video(epoch, config, model, z0_objects, t_test_span, len(t_test_span),
                             gaussians_template, batch_gt_xyz_cp, batch_gt_rot_cp, cam_stack, background, log, split="test")
 
@@ -883,7 +1021,7 @@ def train():
             
 
         # Train Video
-        if epoch % 100 == 0:
+        if epoch % 500 == 0:
             first_batch = next(iter(dataloader))
             (gaussians_t0_list, gaussians_t1_list, batch_gt_xyz_cp, batch_gt_rot_cp, _) = update_gaussians_from_batch(first_batch, gaussians_template, device)
             z0_objects = encoder(gaussians_t0_list, gaussians_t1_list)
@@ -894,12 +1032,13 @@ def train():
 
 
         # Increment segment length and update Pseudo-GT
-        if epoch > 0 and epoch % 200 == 0:
+        if epoch > 0 and loss_photo < config.experiment.loss_threshold:
             update_pseudo_gt(cp_dataset, config, device, gaussians_template, encoder, model, current_segment_length)
             current_segment_length += 1
             segment_duration = current_segment_length / config.optimization.framerate
             t_span = torch.linspace(0, segment_duration, current_segment_length, device=device, dtype=torch.float32)
-        
+            print(f"Pseudo 3D ground truth updated. Increased sequence length to {current_segment_length}.")
+
 
 
         wandb.log(log, step=epoch)
