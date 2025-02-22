@@ -35,33 +35,43 @@ from PIL import Image
 import torch
 from typing import List
 
-class CameraInfo:
-    def __init__(self, uid, R, T, FoVy, FoVx, image, image_path, image_name, width, height, semantic_features, semantic_feature_paths, semantic_feature_names):
-        self.uid = uid
-        self.R = R
-        self.T = T
-        self.FoVy = FoVy
-        self.FoVx = FoVx
-        self.image = image
-        self.image_path = image_path
-        self.image_name = image_name
-        self.width = width
-        self.height = height
-        self.semantic_features = semantic_features
-        self.semantic_feature_paths = semantic_feature_paths
-        self.semantic_feature_names = semantic_feature_names
-
-
-
+from typing import NamedTuple, Optional
+from PIL import Image
+import torch
+import numpy as np
 
 class CameraInfo(NamedTuple):
-    uid: int           # Unique identifier for the camera
-    R: np.ndarray      # Rotation matrix (3x3 numpy array)
-    T: np.ndarray      # Translation vector (3-element numpy array)
-    FoVy: float        # Vertical field of view in degrees
-    FoVx: float        # Horizontal field of view in degrees
-    frames: List['FrameInfo']   # List of frames captured by this camera
-    semantic_features: List[torch.Tensor] = None  # Optional list of semantic features
+    uid: int
+    R: np.ndarray
+    T: np.ndarray
+    FoVy: float
+    FoVx: float
+    
+    image: Optional[Image.Image] = None
+    image_path: Optional[str] = None
+    image_name: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+
+    video: Optional[np.ndarray] = None
+    video_path: Optional[str] = None
+    video_name: Optional[str] = None
+
+    semantic_feature: Optional[torch.Tensor] = None
+    semantic_feature_path: Optional[str] = None
+    semantic_feature_name: Optional[str] = None
+    time: Optional[int] = None
+
+
+
+# class CameraInfo(NamedTuple):
+#     uid: int           # Unique identifier for the camera
+#     R: np.ndarray      # Rotation matrix (3x3 numpy array)
+#     T: np.ndarray      # Translation vector (3-element numpy array)
+#     FoVy: float        # Vertical field of view in degrees
+#     FoVx: float        # Horizontal field of view in degrees
+#     frames: List['FrameInfo']   # List of frames captured by this camera
+#     semantic_features: List[torch.Tensor] = None  # Optional list of semantic features
 
     
 
@@ -600,8 +610,8 @@ def readStaticCamerasFromTransforms(path, transformsfile, white_background, sema
         contents = json.load(json_file)
 
         # Retrieve the camera parameters from the JSON file
-        width = contents["w"]
-        height = contents["h"]
+        width = contents["width"]
+        height = contents["height"]
 
         # Extract the intrinsic matrix K
         K = np.array(contents["k"])[0]
@@ -700,8 +710,8 @@ def readDynamicCamerasFromTransforms(path, transformsfile, white_background, sem
         contents = json.load(json_file)
 
     # Basic resolution info (assuming all frames share the same width and height)
-    width = contents["w"]
-    height = contents["h"]
+    width = contents["width"]
+    height = contents["height"]
 
     # For intrinsics, we assume either a single matrix or per-frame matrices.
     # Here we assume all frames share the same K.
@@ -814,16 +824,16 @@ def readDynamicCamerasFromTransforms(path, transformsfile, white_background, sem
 
 def readCamerasFromTransforms(path, transformsfile, white_background, semantic_feature_root_folder=None, extension=".jpg"):
     cam_infos = []
-
+    print(f"Reading cameras from {path} with {transformsfile}")
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
 
         # Retrieve the camera parameters from the JSON file
-        width = contents["w"]
-        height = contents["h"]
+        width = contents["width"]
+        height = contents["height"]
 
         # Extract the intrinsic matrix K
-        K = np.array(contents["k"])[0][0]
+        K = np.array(contents["k"])[0]
 
         # Extract the focal lengths
         fx = K[0, 0]
@@ -834,8 +844,8 @@ def readCamerasFromTransforms(path, transformsfile, white_background, semantic_f
         FoVy = 2 * np.arctan(height / (2 * fy))# * 180 / np.pi
 
         # Get camera world-to-camera matrices
-        w2c_matrices = contents.get("w2c", [])[0]
-        c2w_matrices = contents.get("c2w", [])[0]
+        w2c_matrices = contents.get("w2c", [])
+        c2w_matrices = contents.get("c2w", [])
 
         for idx, c2w_matrix in enumerate(c2w_matrices):
             cam_name = f"cam_{idx:03d}"  # Camera name with leading zeros
@@ -851,10 +861,8 @@ def readCamerasFromTransforms(path, transformsfile, white_background, semantic_f
             R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
             T = w2c[:3, 3]
 
-
-            # Construct the image file path
-            image_path = os.path.join(path, "images", cam_name + extension)
-            image_name = Path(cam_name).stem
+            image_path = contents["img_path"][idx]
+            image_name = Path(image_path).stem
 
             # Load image
             try:
@@ -870,23 +878,18 @@ def readCamerasFromTransforms(path, transformsfile, white_background, semantic_f
             arr = norm_data[:, :, :3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
             image = Image.fromarray((arr * 255.0).astype(np.uint8), "RGB")
 
-            # Prepare frame information
-            frames = []
-            frame_info = FrameInfo(
-                uid=idx,
-                image=image,
-                image_path=image_path,
-                image_name=image_name,
-                width=image.width,
-                height=image.height,
-                semantic_feature=None,
-                semantic_feature_path=None,
-                semantic_feature_name=None,
-                time=None
-            )
-            frames.append(frame_info)
 
-            # Process semantic features if provided (ensure paths are correct)
+            video_path = contents["vid_path"][idx]
+            video_name = Path(video_path).stem    
+            video = cv2.VideoCapture(video_path)
+            video_frames = []
+            while True:
+                ret, frame = video.read()
+                if not ret:
+                    break
+                video_frames.append(frame)
+            video.release()
+
 
             # Create CameraInfo object
             cam_info = CameraInfo(
@@ -895,11 +898,24 @@ def readCamerasFromTransforms(path, transformsfile, white_background, semantic_f
                 T=T,
                 FoVy=FoVy,
                 FoVx=FoVx,
-                frames=frames
+                image=image,
+                image_path=image_path,
+                image_name=image_name,
+                width=image.width,
+                height=image.height,
+                video=video,
+                video_path=video_path,
+                video_name=video_name,
+                semantic_feature=None,
+                semantic_feature_path=None,
+                semantic_feature_name=None,
+                time=None
             )
             cam_infos.append(cam_info)
 
     return cam_infos
+
+
 
 
 
@@ -1417,12 +1433,13 @@ def readStaticBlenderSyntheticInfo(path, white_background, foundation_model=None
     use_semantic_features = bool(semantic_feature_dir)
 
     print("Reading Transforms")
-    cam_infos = readStaticCamerasFromTransforms(path, "train_static_meta.json", white_background, semantic_feature_root_folder=None)
-    # cam_infos = readCamerasFromTransforms_original(path, "train_meta.json", white_background, semantic_feature_root_folder=None)
-
+    # cam_infos = readStaticCamerasFromTransforms(path, "train_static_meta.json", white_background, semantic_feature_root_folder=None)
+    cam_infos = readCamerasFromTransforms(path, "train_meta.json", white_background, semantic_feature_root_folder=None)
+    # cam_infos = readDynamicCamerasFromTransforms(path, "train_dynamic_meta.json", white_background, semantic_feature_root_folder=None)
+    
     nerf_normalization = getNerfppNorm(cam_infos)
 
-    ply_path = os.path.join(path, "points3D.ply")
+    ply_path = os.path.join(path, "points3d.ply")
     if not os.path.exists(ply_path):
         # Since this data set has no colmap data, we start with random points
         num_pts = 10_000

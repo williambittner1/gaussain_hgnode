@@ -1,4 +1,4 @@
-# gaussian_model_new.py:
+# gaussian_model.py:
 
 import matplotlib.pyplot as plt
 import torch
@@ -12,12 +12,14 @@ from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 # from simple_knn._C import distCUDA2
+from sklearn.neighbors import NearestNeighbors
+
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 import copy
 import torch.nn.functional as F
 from sklearn.preprocessing import StandardScaler
-
+from pointnet.semantic_segmentation.pointnet2_utils import farthest_point_sample
 from scipy.spatial import KDTree
 
 
@@ -43,6 +45,28 @@ def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
     actual_covariance = L @ L.transpose(1, 2)
     symm = strip_symmetric(actual_covariance)
     return symm
+
+
+
+def compute_normals(points_np, k=10):
+    """
+    Compute normals for a point cloud (numpy array of shape (N,3)) using a simple PCA on local neighborhoods.
+    Returns an array of shape (N,3) with normals.
+    """
+    nbrs = NearestNeighbors(n_neighbors=k+1, algorithm='auto').fit(points_np)
+    distances, indices = nbrs.kneighbors(points_np)
+    normals = []
+    for i in range(points_np.shape[0]):
+        # Exclude the point itself (first neighbor)
+        neighbors = points_np[indices[i][1:]]
+        cov = np.cov(neighbors - points_np[i], rowvar=False)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        normal = eigvecs[:, 0]  # eigenvector with smallest eigenvalue
+        normal = normal / (np.linalg.norm(normal) + 1e-8)
+        normals.append(normal)
+    return np.array(normals)
+
+
 
 
 class GaussianModel:
@@ -84,6 +108,8 @@ class GaussianModel:
         self.rot_cp = None              # Tensor of shape [n_clusters, 4] (initially identity) (quaternions of control points)
         self.xyz_rel = None             # For each gaussian: offset from its cluster control point.
         self.rot_rel = None             # For each gaussian: relative rotation with respect to its cluster control point.
+
+        self.semantic_class_color = None
 
 
 
@@ -181,8 +207,196 @@ class GaussianModel:
         inv_control_quats = quaternion_inverse(control_quats)  # Shape: [N, 4]
         self.rot_rel = quaternion_multiply(inv_control_quats, gaussian_rotations)  # Shape: [N, 4]
         
-    
+
+    def run_pointnet_semantic_part_segmentation(self, segmentation_model, num_sample_points=1024, num_classes=50, knn_k=10, overwrite_colors=True):
+        """
+        Run semantic part segmentation on the gaussians using a pretrained PointNet++ segmentation model.
         
+        Steps:
+        1. Subsample to a fixed number of gaussians (using farthest point sampling).
+        2. Construct a point cloud with 9 features per point (xyz, rgb, normals).
+        3. Pass the point cloud (reshaped to [B,9,N]) to the segmentation model.
+        4. Obtain predicted labels for the down-sampled gaussians.
+        5. For each full gaussian, assign the label of its closest down-sampled gaussian.
+        6. Optionally, overwrite the gaussian colors with predicted semantic label colors.
+        
+        Returns:
+            predicted_labels_full (Tensor of shape [N_total]) containing segmentation class labels.
+        """
+        device = self.get_xyz.device
+
+        # 1. Subsample using farthest point sampling.
+        full_xyz = self.get_xyz  # (N_total, 3)
+        N_total = full_xyz.shape[0]
+        if N_total < num_sample_points:
+            raise ValueError(f"Number of gaussians ({N_total}) is less than the required sample count ({num_sample_points}).")
+        
+        full_xyz_unsq = full_xyz.unsqueeze(0)  # (1, N_total, 3)
+        sample_indices = farthest_point_sample(full_xyz_unsq, num_sample_points)  # (1, num_sample_points)
+        sample_indices = sample_indices.squeeze(0)  # (num_sample_points,)
+        downsampled_xyz = full_xyz[sample_indices]  # (num_sample_points, 3)
+        
+        # 2. Construct the 9-feature point cloud.
+        colors = self.colors.to(device).float() / 255.0  # (N_total, 3)
+        downsampled_rgb = colors[sample_indices]  # (num_sample_points, 3)
+        
+        downsampled_xyz_np = downsampled_xyz.detach().cpu().numpy()
+        normals_np = compute_normals(downsampled_xyz_np, k=knn_k)  # (num_sample_points, 3)
+        downsampled_normals = torch.tensor(normals_np, device=device, dtype=downsampled_xyz.dtype)
+        
+        point_features = torch.cat([downsampled_xyz, downsampled_rgb, downsampled_normals], dim=1)
+        point_features = point_features.transpose(0, 1).unsqueeze(0)  # (1, 9, num_sample_points)
+        
+        # 3. Run the segmentation model.
+        segmentation_model = segmentation_model.to(device)
+        segmentation_model.eval()
+        with torch.no_grad():
+            pred, _ = segmentation_model(point_features)
+        predicted_labels_down = torch.argmax(pred, dim=2).squeeze(0)  # (num_sample_points,)
+        
+        # 4. For each full gaussian, assign the label of its closest down-sampled gaussian.
+        dists = torch.cdist(full_xyz, downsampled_xyz)  # (N_total, num_sample_points)
+        nearest_idx = torch.argmin(dists, dim=1)  # (N_total,)
+        predicted_labels_full = predicted_labels_down[nearest_idx]  # (N_total,)
+        
+        self.semantic_labels = predicted_labels_full  # (N_total,)
+        
+        # 5. Optionally, overwrite the gaussian colors with predicted semantic label colors.
+        if overwrite_colors:
+            # Create a color mapping for each class.
+            color_mapping_np = get_cluster_colors(num_classes)  # shape (num_classes, 3), uint8
+            color_mapping_tensor = torch.tensor(color_mapping_np, device=device, dtype=torch.uint8)
+            new_colors = color_mapping_tensor[predicted_labels_full]  # (N_total, 3)
+            new_colors_float = new_colors.float() / 255.0  # normalized [0,1]
+            # NEW: Instead of modifying _features_dc and _features_rest, simply store the semantic class colors.
+            self.semantic_class_color = new_colors_float.clone()
+            # Optionally, also disable SH-based coloring.
+            self.active_sh_degree = None
+        
+        return predicted_labels_full
+
+
+    def cluster_gaussians_with_semantic_features(self, num_clusters, overwrite_colors=True):
+        """
+        Cluster gaussians using their positions and semantic features, and assign cluster colors.
+        
+        This method assumes that:
+        - self.get_xyz returns a tensor of shape (N, 3) containing gaussian positions.
+        - self.semantic_labels is available (e.g. after run_pointnet_semantic_part_segmentation)
+            and is a tensor of shape (N,) with integer semantic labels.
+        
+        The semantic labels are converted to one‑hot vectors (assuming 13 semantic classes, adjust if needed)
+        and concatenated with the positions to form a feature vector of dimension 16.
+        KMeans is then used to cluster the gaussians into num_clusters clusters.
+        
+        If overwrite_colors is True, this method will assign a cluster color to each gaussian by
+        computing distinct colors (using get_cluster_colors) for each cluster.
+        
+        Args:
+            num_clusters (int): Desired number of clusters.
+            overwrite_colors (bool): If True, sets self.cluster_color with per-gaussian RGB colors.
+        
+        Returns:
+            torch.Tensor: A tensor of shape (N,) containing the cluster label for each gaussian.
+        """
+        # 1. Get positions as a numpy array, shape (N, 3)
+        positions = self.get_xyz.cpu().detach().numpy()
+        
+        # 2. Ensure semantic labels are available.
+        if not hasattr(self, 'semantic_labels'):
+            raise ValueError("Semantic labels not found. Please run run_pointnet_semantic_part_segmentation first.")
+        semantic_labels = self.semantic_labels.cpu().detach().numpy()  # shape (N,)
+        
+        # 3. Convert semantic labels to one-hot vectors.
+        num_semantic_classes = 13  # Adjust if needed.
+        semantic_onehot = np.eye(num_semantic_classes)[semantic_labels]  # shape (N, 13)
+        
+        # 4. Concatenate positions and semantic one-hot features to form feature vectors.
+        features = np.concatenate([positions, semantic_onehot], axis=1)  # shape (N, 16)
+        
+        # 5. Cluster using KMeans.
+        from sklearn.cluster import KMeans
+        kmeans = KMeans(n_clusters=num_clusters, random_state=42).fit(features)
+        cluster_labels = kmeans.labels_  # shape (N,)
+        
+        # Store the cluster labels as a tensor.
+        self.semantic_cluster_labels = torch.tensor(cluster_labels, device=self.device, dtype=torch.long)
+        
+        # 6. Optionally assign a distinct color to each cluster.
+        if overwrite_colors:
+            # get_cluster_colors returns an array of shape (num_clusters, 3) with RGB values in [0, 255]
+            cluster_colors_np = get_cluster_colors(num_clusters)
+            # Normalize colors from [0, 255] to [0, 1]
+            cluster_colors = torch.tensor(cluster_colors_np, device=self.device, dtype=torch.float32) / 255.0
+            # For each gaussian, assign the color of its cluster.
+            self.cluster_color = cluster_colors[self.semantic_cluster_labels]  # shape (N, 3)
+            # Also optionally store the list of individual cluster colors.
+            self.individual_cluster_colors = cluster_colors
+
+        print(f"Clustered {features.shape[0]} gaussians into {num_clusters} clusters.")
+        return self.semantic_cluster_labels
+
+
+
+
+    def initialize_controlpoints_onehotencoding(self, num_objects):
+        """
+        Cluster all Gaussians into num_objects clusters, and initialize control points.
+        
+        For each cluster:
+        - Set control_point.position as the mean of the positions of all Gaussians in that cluster.
+        - Set control_point.quaternion as the identity unit quaternion.
+        - For each Gaussian in the cluster, compute:
+                relative_position = gaussian.position - control_point.position
+                relative_quaternion = quaternion_multiply(quaternion_inverse(control_point.quaternion), gaussian.quaternion)
+        
+        This function updates the following attributes:
+        - self.cluster_label (One-hot Tensor of shape [N, num_objects])
+        - self.xyz_cp (Tensor of shape [num_objects, 3])
+        - self.rot_cp (Tensor of shape [num_objects, 4])
+        - self.xyz_rel (Tensor of shape [N, 3])
+        - self.rot_rel (Tensor of shape [N, 4])
+        """
+
+        # 1. Cluster the Gaussians based on their positions.
+        positions = self.get_xyz.detach().cpu().numpy()  # shape (N, 3)
+        kmeans = KMeans(n_clusters=num_objects, random_state=42).fit(positions)
+        labels = kmeans.labels_  # shape (N,)
+
+        # Convert integer labels to one-hot encoding
+        labels_tensor = torch.tensor(labels, device=self.device, dtype=torch.long)
+        onehot = torch.nn.functional.one_hot(labels_tensor, num_classes=num_objects).float()  # shape (N, num_objects)
+        self.cluster_label = onehot
+
+        # 2. Compute cluster control points (mean positions) and assign identity quaternions.
+        xyz_cp = []
+        for i in range(num_objects):
+            indices = np.where(labels == i)[0]
+            if indices.size == 0:
+                raise ValueError(f"Cluster {i} is empty - this should never happen with K-means clustering")
+            else:
+                cluster_mean = positions[indices].mean(axis=0)
+            xyz_cp.append(cluster_mean)
+        self.xyz_cp = torch.tensor(xyz_cp, device=self.device, dtype=self.get_xyz.dtype)
+        
+        # Use identity quaternions for all control points: (1, 0, 0, 0)
+        identity_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device, dtype=self.get_xyz.dtype)
+        self.rot_cp = identity_quat.repeat(num_objects, 1)
+        
+        # 3. Compute relative positions and relative rotations for each Gaussian.
+        # Instead of using integer indexing, compute the control point per Gaussian as a weighted sum.
+        gaussian_positions = self.get_xyz  # shape (N, 3)
+        gaussian_rotations = self.get_rotation  # shape (N, 4)
+        
+        # Compute control points for each Gaussian by matrix multiplying the one-hot labels with control points.
+        control_pts = onehot @ self.xyz_cp  # shape: (N, 3)
+        self.xyz_rel = gaussian_positions - control_pts  # shape: (N, 3)
+        
+        # Similarly, compute control quaternions per Gaussian
+        control_quats = onehot @ self.rot_cp  # shape: (N, 4)
+        inv_control_quats = quaternion_inverse(control_quats)  # shape: (N, 4)
+        self.rot_rel = quaternion_multiply(inv_control_quats, gaussian_rotations)  # shape: (N, 4)
+
 
 
     def update_gaussians_from_controlpoints(self):

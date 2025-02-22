@@ -5,7 +5,7 @@
 import os
 import torch
 import wandb
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from tqdm import tqdm
 import torch.nn.functional as F
 from random import randint
@@ -19,19 +19,18 @@ import cv2
 # local imports
 from scene import Scene
 from scene.gaussian_model import GaussianModel
-from gaussian_renderer_gsplat import render
+from gaussian_renderer_gsplat import render, render_batch
 # from gaussian_renderer_inria import render
 
 
 
 @dataclass
 class ExperimentConfig:
-    data_path: str = f"/work/williamb/datasets"
-    dataset_name: str = "bouncing_spheres_1000seq_200ts_video"
+    data_path: str = f"/work/williamb/datasets"    # "/work/williamb/datasets"  or "/users/williamb/dev/gaussain_hgnode/data"
+    dataset_name: str = "pendulum_100seq_250ts"
     dataset_path: str = f"{data_path}/{dataset_name}"
-    gm_output_path: str = f"{data_path}/gm_output/"
-    device: str = "cuda"
-
+    gm_output_path: str = f"{dataset_path}/"
+    data_device: str = "cuda"
 # Static gaussian model optimization config
 @dataclass
 class OptimizationConfig:
@@ -96,6 +95,31 @@ class PipelineConfig:
     compute_cov3D_python: bool = False
     debug: bool = True
 
+def flatten_dataclass(cls):
+    """Decorator to flatten nested dataclass attributes while preserving original structure."""
+    original_init = cls.__init__
+    
+    def __init__(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        # Flatten all attributes from nested dataclasses
+        for field in fields(cls):
+            if hasattr(field.type, '__dataclass_fields__'):  # Check if field is a dataclass
+                nested_obj = getattr(self, field.name)
+                for nested_field in fields(nested_obj):
+                    # Don't override existing attributes
+                    if not hasattr(cls, nested_field.name):
+                        # Create a closure to capture the current values
+                        def make_property(field_name, nested_field_name):
+                            return property(
+                                lambda self: getattr(getattr(self, field_name), nested_field_name)
+                            )
+                        # Set the property
+                        setattr(cls, nested_field.name, make_property(field.name, nested_field.name))
+    
+    cls.__init__ = __init__
+    return cls
+
+@flatten_dataclass
 @dataclass
 class Config:
     experiment: ExperimentConfig = ExperimentConfig()
@@ -108,7 +132,7 @@ def select_random_camera(scene):
     viewpoint_cam = cam_stack[randint(0, len(cam_stack) - 1)]
     return viewpoint_cam
 
-def visualize_gaussians(scene, gaussians, config, background, cam_stack, iteration=None):
+def visualize_gaussians(scene, gaussians, config, background, cam_stack, name=None):
     for cam_idx, camera in enumerate(cam_stack):
         render_pkg = render(camera, gaussians, config.pipeline, bg_color=background)
         rendered_image = render_pkg["render"].detach().cpu().numpy().transpose(1, 2, 0)
@@ -126,8 +150,99 @@ def visualize_gaussians(scene, gaussians, config, background, cam_stack, iterati
 
         # wandb.log({f"render_{cam_idx}": wandb.Image(rendered_image)})
         # wandb.log({f"gt_{cam_idx}": wandb.Image(gt_image)})
-        wandb.log({f"combined_{cam_idx}": wandb.Image(combined_image)})
+        wandb.log({f"{name}_{cam_idx}": wandb.Image(combined_image)})
     print(f"Logged render and gt")
+
+
+def train_static_gaussian_model_batchrendering(scene, config, iterations = 30000):
+
+    bg_color = [0, 0, 0]
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+    scene.initialize_gaussians_from_scene_info(scene.gaussians, config.model)
+
+    scene.gaussians.training_setup_0(config.optimization)
+
+    viewpoint_stack = scene.getTrainCameraObjects()
+
+    progress_bar = tqdm(range(iterations), desc=f"Training")
+    for iteration in range(iterations):
+        
+        # viewpoint_cam = select_random_camera(scene)
+
+        # gt_image = viewpoint_cam.original_image.permute(2,0,1)
+
+        # # render_pkg = render(viewpoint_cam, scene.gaussians, config.pipeline, background)
+        
+        
+        # rendered_image = render_pkg["render"]
+        # visibility_filter = render_pkg["visibility_filter"]
+        # radii = render_pkg["radii"]
+        # viewspace_point_tensor = render_pkg["viewspace_points"]
+
+        # loss = F.mse_loss(rendered_image, gt_image)
+
+
+        width = viewpoint_stack[0].image_width
+        height = viewpoint_stack[0].image_height    
+        gt_batch = torch.zeros((len(viewpoint_stack), 3, height, width), device="cuda")
+        for cam_idx, camera in enumerate(viewpoint_stack):
+            gt_image = camera.original_image.permute(2,0,1)
+            gt_batch[cam_idx] = gt_image
+        gt_batch = gt_batch.permute(0,2,3,1)
+
+        render_pkg = render_batch(viewpoint_stack, scene.gaussians, config.pipeline, background)
+        rendered_batch = render_pkg["render"].permute(1,0,2,3)
+        visibility_filter = render_pkg["visibility_filter"]
+        radii = render_pkg["radii"]
+        viewspace_point_tensor = render_pkg["viewspace_points"]
+
+        loss = F.mse_loss(rendered_batch, gt_batch)
+
+        loss.backward()
+
+        scene.gaussians.update_learning_rate(iteration)
+        scene.gaussians.optimizer.step()
+        scene.gaussians.optimizer.zero_grad(set_to_none=True)
+
+        if iteration % 500 == 0:
+            viewpoint_cam = select_random_camera(scene)
+            gt_image = viewpoint_cam.original_image.permute(2,0,1)
+
+            viewpoint_cam = select_random_camera(scene)
+            render_pkg = render(viewpoint_cam, scene.gaussians, config.pipeline, background)
+        
+            rendered_image = render_pkg["render"]
+            visibility_filter = render_pkg["visibility_filter"]
+            radii = render_pkg["radii"]
+            viewspace_point_tensor = render_pkg["viewspace_points"]
+
+
+            loss = F.mse_loss(rendered_image, gt_image)
+
+            loss.backward()
+
+
+            densification_step(
+                iteration,
+                config.optimization,
+                scene.gaussians,
+                render_pkg,
+                visibility_filter,
+                radii,
+                viewspace_point_tensor,
+                scene,
+                config.model
+                )
+        
+            print("Number of Gaussians: ", len(scene.gaussians._xyz))
+
+        if iteration % 5000 == 0:
+            visualize_gaussians(scene, scene.gaussians, config, background, cam_stack=scene.getTrainCameraObjects()[:10], iteration=iteration)
+
+        progress_bar.set_postfix({"Loss": f"{loss.item():.7f}"})
+        progress_bar.update(1)
+    
 
 
 def train_static_gaussian_model(scene, config, iterations = 30000):
@@ -139,6 +254,8 @@ def train_static_gaussian_model(scene, config, iterations = 30000):
 
     scene.gaussians.training_setup_0(config.optimization)
 
+    viewpoint_stack = scene.getTrainCameraObjects()
+
     progress_bar = tqdm(range(iterations), desc=f"Training")
     for iteration in range(iterations):
         
@@ -147,7 +264,8 @@ def train_static_gaussian_model(scene, config, iterations = 30000):
         gt_image = viewpoint_cam.original_image.permute(2,0,1)
 
         render_pkg = render(viewpoint_cam, scene.gaussians, config.pipeline, background)
-
+        
+        
         rendered_image = render_pkg["render"]
         visibility_filter = render_pkg["visibility_filter"]
         radii = render_pkg["radii"]
@@ -175,14 +293,14 @@ def train_static_gaussian_model(scene, config, iterations = 30000):
                 config.model
                 )
         
-            print("Number of Gaussians: ", len(scene.gaussians._xyz))
+            
 
 
-        if iteration % 5000 == 0:
-            visualize_gaussians(scene, scene.gaussians, config, background, cam_stack=scene.getTrainCameraObjects(), iteration=iteration)
 
-        progress_bar.set_postfix({"Loss": f"{loss.item():.7f}"})
+        progress_bar.set_postfix({"Loss": f"{loss.item():.7f}", "Number of Gaussians": f"{len(scene.gaussians._xyz)}"})
         progress_bar.update(1)
+    
+    visualize_gaussians(scene, scene.gaussians, config, background, cam_stack=scene.getTrainCameraObjects()[:1], name=f"final_{scene.dataset_path.split('/')[-1]}")
     
         
     return scene
@@ -301,6 +419,61 @@ def convert_cameras_gt_to_static_train_meta(config, scene_path, cameras_gt_json)
     return data
 
 
+
+def convert_cameras_gt_to_dynamic_train_meta(config, scene_path, cameras_gt_json):
+    
+    data = dict()
+    
+    cameras_info = cameras_gt_json
+
+    data = dict()
+    data['w'] = cameras_info[0]['width']
+    data['h'] = cameras_info[0]['height']
+    
+    w2c, c2w, k, cam_id, fn = [], [], [], [], []    
+    
+    total_timesteps = 0 #cameras_info[0]['total_timesteps']
+    
+    total_cameras = len(os.listdir(os.path.join(scene_path, 'dynamic')))
+
+    # For each timestep, loop over cameras.
+
+    k_inner = []
+    w2c_inner = []
+    c2w_inner = []
+    cam_id_inner = []
+    fn_inner = []
+    
+    # Choose the number of cameras to process at this timestep:
+
+    num_cams = total_cameras
+
+    for c in range(num_cams):
+        # Find the camera info for camera c at timestep t.
+        curr_camera_info = [ci for ci in cameras_info if ci['camera_id'] == c and ci['frame'] == 0][0]
+        k_inner.append(get_intrinsics(curr_camera_info))
+        w2c_inner.append(curr_camera_info['w2c'])
+        c2w_inner.append(curr_camera_info['c2w'])
+        cam_id_inner.append(str(curr_camera_info['camera_id']))
+        fn_inner.append(f"{scene_path}/static/{curr_camera_info['img_name']}.png")
+        
+    w2c.append(w2c_inner)
+    k.append(k_inner)
+    cam_id.append(cam_id_inner)
+    fn.append(fn_inner)
+    c2w.append(c2w_inner)
+    
+    data['w2c'] = w2c_inner
+    data['k'] = k_inner
+    data['cam_id'] = cam_id_inner
+    data['static_fn'] = fn_inner
+    data['c2w'] = c2w_inner
+
+    return data
+
+
+
+
 def convert_cameras_gt_to_dynamic_train_meta(config, scene_path, cameras_gt_json):
     """
     Create a train_meta dictionary that includes:
@@ -317,8 +490,8 @@ def convert_cameras_gt_to_dynamic_train_meta(config, scene_path, cameras_gt_json
 
     data = {}
     # Use the resolution from the first entry (assumes all cameras share the same size)
-    data['w'] = cameras_gt_json[0]['width']
-    data['h'] = cameras_gt_json[0]['height']
+    data['width'] = cameras_gt_json[0]['width']
+    data['height'] = cameras_gt_json[0]['height']
     
     # Initialize lists to be stored in the meta file.
     # (w2c, c2w, k, cam_id lists will correspond only to dynamic frames.)
@@ -388,15 +561,46 @@ def convert_cameras_gt_to_dynamic_train_meta(config, scene_path, cameras_gt_json
 
     return data
 
+def convert_cameras_gt_to_train_meta(config, scene_path, cameras_gt_json):
+    """
+    Convert cameras_gt.json to train_meta.json
+    """
+    data = {}
+    # Use the resolution from the first entry (assumes all cameras share the same size)
+    data['width'] = cameras_gt_json[0]['width']
+    data['height'] = cameras_gt_json[0]['height']
+    
+    # Initialize lists to be stored in the meta file.
+    # (w2c, c2w, k, cam_id lists will correspond only to dynamic frames.)
+    w2c, c2w, k, cam_id, img_path, vid_path = [], [], [], [], [], []
 
-def train():
+    for entry in cameras_gt_json:
+        cam_idx = entry['camera_id']
+        static_img_path = os.path.join(scene_path, "static", entry['img_fn'])
+        img_path.append(static_img_path)
+        vid_path.append(os.path.join(scene_path, "dynamic", entry['vid_fn']))
+        w2c.append(entry['w2c'])
+        c2w.append(entry['c2w'])
+        k.append(get_intrinsics(entry))
+        cam_id.append(str(cam_idx))
+
+    data['w2c'] = w2c
+    data['c2w'] = c2w
+    data['k'] = k
+    data['cam_id'] = cam_id
+    data['img_path'] = img_path
+    data['vid_path'] = vid_path
+
+    return data
+
+
+def train(config):
     """
     Main training function.
     """
 
-    config = Config()
-    wandb.init(project="blender_static_preprocessing")
-    device = config.experiment.device
+    # wandb.init(project="blender_static_preprocessing")
+    device = config.experiment.data_device
     background = torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
 
 
@@ -418,28 +622,50 @@ def train():
         scene_path = dataset[i]
 
         # convert cameras_gt.json to train_meta.json
-        print(f"Converting cameras_gt.json to train_meta.json for {scene_path}")
+        # print(f"Converting cameras_gt.json to train_static_meta.json for {scene_path}")
         cameras_gt_path = os.path.join(scene_path, 'cameras_gt.json')
-        train_static_meta_path = os.path.join(scene_path, 'train_static_meta.json')
+        # train_static_meta_path = os.path.join(scene_path, 'train_static_meta.json')
 
-        if not os.path.exists(train_static_meta_path):
-            with open(cameras_gt_path, 'r') as f:
-                cameras_gt_json = json.load(f)
-            train_static_meta_json = convert_cameras_gt_to_static_train_meta(config, scene_path, cameras_gt_json)
-            with open(train_static_meta_path, 'w') as f:
-                json.dump(train_static_meta_json, f)
-            print(f"Saved static-video-based train_meta.json to {train_static_meta_path}")
-        else:
-            print(f"train_meta.json already exists for {scene_path}")
+        # if not os.path.exists(train_static_meta_path):
+        #     with open(cameras_gt_path, 'r') as f:
+        #         cameras_gt_json = json.load(f)
+        #     train_static_meta_json = convert_cameras_gt_to_static_train_meta(config, scene_path, cameras_gt_json)
+        #     with open(train_static_meta_path, 'w') as f:
+        #         json.dump(train_static_meta_json, f)
+        #     print(f"Saved static-video-based train_meta.json to {train_static_meta_path}")
+        # else:
+        #     print(f"train_meta.json already exists for {scene_path}")  
 
+        # if not os.path.exists(os.path.join(scene_path, "train_dynamic_meta.json")):
+        #     print(f"Converting cameras_gt.json to train_dynamic_meta.json for {scene_path}")
+        #     cameras_gt_path = os.path.join(scene_path, 'cameras_gt.json')
+        #     train_dynamic_meta_path = os.path.join(scene_path, 'train_dynamic_meta.json')
+        #     with open(cameras_gt_path, 'r') as f:
+        #         cameras_gt_json = json.load(f)
+        #     train_dynamic_meta_json = convert_cameras_gt_to_dynamic_train_meta(config, scene_path, cameras_gt_json)
+        #     with open(train_dynamic_meta_path, 'w') as f:
+        #         json.dump(train_dynamic_meta_json, f)
+        #     print(f"Saved dynamic-video-based train_meta.json to {train_dynamic_meta_path}")
 
+        # if not os.path.exists(os.path.join(scene_path, "train_meta.json")):
+        print(f"Converting cameras_gt.json to train_meta.json for {scene_path.split('/')[-1]}")
+        train_meta_path = os.path.join(scene_path, "train_meta.json")
+        with open(cameras_gt_path, 'r') as f:
+            cameras_gt_json = json.load(f)
+        train_meta_json = convert_cameras_gt_to_train_meta(config, scene_path, cameras_gt_json)
+        with open(train_meta_path, 'w') as f:
+            json.dump(train_meta_json, f)
+        print(f"Saved train_meta.json to {train_meta_path}")
 
         scene = Scene(config=config, scene_path=scene_path)
         scene.gaussians = GaussianModel(sh_degree=3)
 
         scene = train_static_gaussian_model(scene, config, iterations=config.optimization.iterations)
-        os.makedirs(config.experiment.gm_output_path, exist_ok=True)
-        torch.save(scene.gaussians.capture(), os.path.join(config.experiment.gm_output_path, f"chkpnt{dataset.scene_dirs[i]}.pth"))
+
+        gaussian_checkpoint_path = os.path.join(scene_path, "gm_checkpoints", f"chkpnt{dataset.scene_dirs[i].split('/')[-1]}.pth")
+        os.makedirs(os.path.dirname(gaussian_checkpoint_path), exist_ok=True)
+        torch.save(scene.gaussians.capture(), gaussian_checkpoint_path)
+        print(f"Saved static gaussian model with {len(scene.gaussians._xyz)} gaussians to {gaussian_checkpoint_path}")
 
 
 
@@ -447,4 +673,7 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+    config = Config()
+    wandb.init(project="blender_static_preprocessing_debug")
+    train(config)
+    wandb.finish()

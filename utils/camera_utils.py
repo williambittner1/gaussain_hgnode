@@ -136,10 +136,11 @@ def createCamObject1(args, camera_infos):
 
 
 
-def createCamObject_original(args, camera_info):
-    gt_image = torch.from_numpy(np.array(camera_info.frames[0].image)).float().cuda() / 255.0
-    gt_semantic_feature = camera_info.semantic_features
+def createCamObject(args, camera_info):
+    gt_image = torch.from_numpy(np.array(camera_info.image)).float().cuda() / 255.0
+    gt_semantic_feature = camera_info.semantic_feature
     loaded_mask = torch.ones_like(gt_image).cuda()
+    gt_video = camera_info.video
 
     return Camera(
         colmap_id=camera_info.uid,
@@ -148,6 +149,7 @@ def createCamObject_original(args, camera_info):
         FoVx=camera_info.FoVx,
         FoVy=camera_info.FoVy,
         image=gt_image,
+        video=gt_video,
         gt_alpha_mask=loaded_mask,
         image_name=camera_info.image_name,
         uid=camera_info.uid,
@@ -155,62 +157,6 @@ def createCamObject_original(args, camera_info):
         data_device=args.data_device
     )
 
-def createCamObject(args, camera_info):
-    # Convert image to a CUDA tensor and normalize to [0, 1]
-    gt_image = torch.from_numpy(np.array(camera_info.frames[0].image)).float().cuda() / 255.0
-
-    # Check if semantic features are available
-    if camera_info.semantic_features:
-        gt_semantic_feature = camera_info.semantic_features
-    else:
-        # If semantic features are not provided, assign a default value (e.g., an empty tensor)
-        gt_semantic_feature = None  # Or torch.empty(0).cuda() if you need a tensor
-
-    # Generate a default mask (assuming the mask is all ones)
-    loaded_mask = torch.ones_like(gt_image).cuda()
-
-    # Create and return the Camera object
-    return Camera(
-        colmap_id=camera_info.uid,
-        R=camera_info.R,
-        T=camera_info.T,
-        FoVx=camera_info.FoVx,
-        FoVy=camera_info.FoVy,
-        image=gt_image,
-        gt_alpha_mask=loaded_mask,
-        image_name=camera_info.frames[0].image_name,
-        uid=camera_info.uid,
-        semantic_feature=gt_semantic_feature,  # This could be None if no features are available
-        data_device=args.experiment.device
-    )
-
-
-
-
-def createCamObject_old(args, camera_infos):
-
-
-
-    frames = camera_infos.frames
-    gt_images = [torch.from_numpy(np.array(frame.image)) / 255.0 for frame in frames]
-    image_names = [frame.image_name for frame in frames]
-    uids = [frame.uid for frame in frames]
-    gt_semantic_features = [frame.semantic_feature for frame in frames]
-    loaded_mask = [torch.ones_like(image) for image in gt_images]
-
-
-    return Cameras(
-    colmap_id=camera_infos.uid,
-    R=camera_infos.R,
-    T=camera_infos.T,
-    FoVx=camera_infos.FoVx,
-    FoVy=camera_infos.FoVy,
-    images=gt_images,
-    gt_alpha_masks=loaded_mask,
-    image_names=image_names,
-    uids=uids,
-    semantic_features=gt_semantic_features,
-    data_device=args.data_device)
 
 def cameraList_from_camInfos_original(cam_infos, resolution_scale, args):
     camera_list = []
