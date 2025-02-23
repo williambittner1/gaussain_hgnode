@@ -1,246 +1,145 @@
+# =============================================
+# Augmented GraphNeuralODE Module
+# the z-feature is augmented with concatenation of initial state for each node
+# =============================================
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchdiffeq import odeint
 
-import torch.nn.functional as F
-from torchdiffeq import odeint
+# Example helper functions (quaternion multiply/derivative remain unchanged if needed)
+def quaternion_multiply(q1, q2):
+    w1, x1, y1, z1 = q1.unbind(dim=-1)
+    w2, x2, y2, z2 = q2.unbind(dim=-1)
+    w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+    x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+    y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+    z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+    return torch.stack((w, x, y, z), dim=-1)
 
-class GraphNeuralODEFunc_no_conditioning(nn.Module):
-    def __init__(self, object_dim, hidden_dim, n_hidden_layers):
+def quaternion_derivative(q, omega):
+    zeros = torch.zeros_like(omega[..., :1])
+    omega_quat = torch.cat([zeros, omega], dim=-1)
+    return 0.5 * quaternion_multiply(q, omega_quat)
+
+# =============================================
+# Augmented Graph Neural ODE Function
+# =============================================
+class AugmentedGraphNeuralODEFunc(nn.Module):
+    def __init__(self, original_dim, hidden_dim, n_hidden_layers):
         """
-        ODE function that models object (node) dynamics via graph message passing.
+        ODE function for augmented node dynamics.
         
-        Args:
-            object_dim (int): Dimension of the object state (e.g., 13 for [pos, vel, quat, omega]).
-            hidden_dim (int): Hidden layer dimension for the MLPs.
-            n_hidden_layers (int): Number of hidden layers in each MLP.
+        The input state has shape [B, N, 2*original_dim]:
+          - The first original_dim entries are dynamic.
+          - The second original_dim entries are a static copy of z0.
+          
+        For message passing, we use the full augmented state. However, only the evolving
+        (first half) is updated; the static part has zero derivative.
+        
+        We assume that in the evolving part the first 3 dimensions correspond to position.
         """
-        super(GraphNeuralODEFunc, self).__init__()
-        self.object_dim = object_dim
-        
-        # Edge network: takes as input the concatenation of:
-        #  - state of object i: [object_dim] - pos + rot + vel + omega (+ latent shape feature conditioning)
-        #  - state of object j: [object_dim] - pos + rot + vel + omega (+ latent shape feature conditioning)
-        #  - relative position: [3]
-        #  - distance: [1]
-        # Total input dimension: 2*object_dim + 3 + 1.
-        edge_input_dim = 2 * object_dim + 4
-        self.edge_net = self._build_mlp(edge_input_dim, hidden_dim, object_dim, n_hidden_layers)
-        
-        # Update network: takes as input the concatenation of:
-        #  - current object state: [object_dim]
-        #  - aggregated message: [object_dim]
-        # Total input dimension: 2*object_dim.
-        update_input_dim = 2 * object_dim
-        self.update_net = self._build_mlp(update_input_dim, hidden_dim, object_dim, n_hidden_layers)
+        super(AugmentedGraphNeuralODEFunc, self).__init__()
+        self.original_dim = original_dim
+        self.augmented_dim = 2 * original_dim
+        # For message passing, use the full augmented state.
+        # Each edge gets: state_i | state_j | relative position (from evolving part) | distance.
+        # Input dimension = 2 * augmented_dim + 4.
+        edge_input_dim = 2 * self.augmented_dim + 4 + 4 # 2 * augmented node dim + 4 (current relative position and distance) + 4 (initial relative position and distance)
+        # Let the edge network output a message of dimension original_dim.
+        self.edge_net = self._build_mlp(edge_input_dim, hidden_dim, original_dim, n_hidden_layers)
+        # Update network: takes as input the concatenation of the evolving part and the aggregated message.
+        # Input dimension = 2 * original_dim.
+        self.update_net = self._build_mlp(2 * original_dim, hidden_dim, original_dim, n_hidden_layers)
         self.nfe = 0
 
     def _build_mlp(self, input_dim, hidden_dim, output_dim, n_hidden_layers):
-        layers = []
-        layers.append(nn.Linear(input_dim, hidden_dim))
-        layers.append(nn.ReLU())
+        layers = [nn.Linear(input_dim, hidden_dim), nn.ReLU()]
         for _ in range(n_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
             layers.append(nn.ReLU())
         layers.append(nn.Linear(hidden_dim, output_dim))
         return nn.Sequential(*layers)
     
-    def forward(self, t, z_objects):
+    def forward(self, t, z_aug):
         """
-        Compute the time derivative dx/dt for the object nodes.
-        
-        Args:
-            t: current time (not used explicitly here, but can be concatenated if desired).
-            z_objects: Tensor of shape [B, N, object_dim], where B is the batch size,
-                      N is the number of object nodes.
-                      
-        Returns:
-            dx: Tensor of shape [B, N, object_dim] representing the time derivative.
+        z_aug: [B, N, 2*original_dim]
+        Returns dz/dt with shape [B, N, 2*original_dim], where the derivative of the second half is zero.
         """
-        B, N, D = z_objects.shape
-        # Extract positions from each object state.
-        # Assume the first 3 dimensions correspond to the COM (position).
-        pos = z_objects[..., :3]  # [B, N, 3]
+        B, N, _ = z_aug.shape
+        # Split into dynamic and static parts.
+        evolving = z_aug[..., :self.original_dim]   # [B, N, original_dim]
+        static = z_aug[..., self.original_dim:]       # [B, N, original_dim] (should remain unchanged)
         
-        # Compute pairwise relative positions.
-        # For each pair (i, j), compute diff = pos_i - pos_j.
-        diff = pos.unsqueeze(2) - pos.unsqueeze(1)  # [B, N, N, 3]
-        # Compute the Euclidean distance for each pair.
-        dist = torch.norm(diff, dim=-1, keepdim=True)  # [B, N, N, 1]
-        
-        # Expand the object state for each edge.
-        x_i = z_objects.unsqueeze(2).expand(B, N, N, D)  # state of node i for each edge [B, N, N, D]
-        x_j = z_objects.unsqueeze(1).expand(B, N, N, D)  # state of node j for each edge [B, N, N, D]
-        
-        # Concatenate edge features: [x_i, x_j, diff, dist]
-        edge_features = torch.cat([x_i, x_j, diff, dist], dim=-1)  # [B, N, N, 2*D+3+1]
-        
-        # Pass edge features through the edge network.
-        edge_messages = self.edge_net(edge_features)  # [B, N, N, object_dim]
-        
-        # Aggregate messages for each node by summing over j.
-        agg_message = edge_messages.sum(dim=2)  # [B, N, object_dim]
-        
-        # Concatenate the aggregated message with the current object state.
-        update_input = torch.cat([z_objects, agg_message], dim=-1)  # [B, N, 2*object_dim]
-        
-        # Compute the state derivative using the update network.
-        dx = self.update_net(update_input)  # [B, N, object_dim]
-        
-        self.nfe += 1
-        return dx
-    
-
-class GraphNeuralODEFunc(nn.Module):
-    def __init__(self, node_feature_dim, node_conditioning_dim, hidden_dim, n_hidden_layers):
-        """
-        ODE function for object dynamics using graph message passing.
-        
-        The full node state is assumed to have:
-          - Evolving features of dimension `node_feature_dim`
-          - Conditioning features of dimension `node_conditioning_dim`
-        The conditioning features remain constant during integration.
-        
-        Args:
-            node_feature_dim (int): Dimension of the state features that evolve.
-            node_conditioning_dim (int): Dimension of the conditioning features (constant).
-            hidden_dim (int): Hidden layer size for the MLPs.
-            n_hidden_layers (int): Number of hidden layers in each MLP.
-        """
-        super(GraphNeuralODEFunc, self).__init__()
-        self.node_feature_dim = node_feature_dim
-        self.node_conditioning_dim = node_conditioning_dim
-        self.total_dim = node_feature_dim + node_conditioning_dim
-
-        # When computing messages, use the entire node state (both evolving and conditioning).
-        # For each edge between nodes i and j, we concatenate:
-        #    state_i (total_dim) | state_j (total_dim) | relative position (3) | distance (1)
-        # Total input dim = 2 * total_dim + 4.
-        edge_input_dim = 2 * self.total_dim + 4
-        # We let the edge network output a message of size equal to node_feature_dim.
-        self.edge_net = self._build_mlp(edge_input_dim, hidden_dim, node_feature_dim, n_hidden_layers)
-        
-        # The update network takes as input the concatenation of:
-        #    current evolving state (node_feature_dim) and aggregated message (node_feature_dim).
-        # Total input dim = 2 * node_feature_dim.
-        self.update_net = self._build_mlp(2 * node_feature_dim, hidden_dim, node_feature_dim, n_hidden_layers)
-        self.nfe = 0
-
-    def _build_mlp(self, input_dim, hidden_dim, output_dim, n_hidden_layers):
-        layers = []
-        layers.append(nn.Linear(input_dim, hidden_dim))
-        layers.append(nn.ReLU())
-        for _ in range(n_hidden_layers - 1):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
-        layers.append(nn.Linear(hidden_dim, output_dim))
-        return nn.Sequential(*layers)
-    
-    def forward(self, t, z_objects):
-        """
-        Compute the time derivative dz/dt for each node.
-        
-        Args:
-            t: current time (not explicitly used, but available if needed).
-            z_objects: Tensor of shape [B, N, total_dim] where total_dim = node_feature_dim + node_conditioning_dim.
-                      The first node_feature_dim entries evolve over time; the last node_conditioning_dim entries
-                      are constant conditioning signals.
-                      
-        Returns:
-            dz: Tensor of shape [B, N, total_dim] containing the time derivatives.
-                The derivative for the conditioning part is zero.
-        """
-        B, N, D = z_objects.shape  # D should equal total_dim
-        # Split the node state into the evolving features and conditioning features.
-        evolving_state = z_objects[..., :self.node_feature_dim]    # [B, N, node_feature_dim]
-        conditioning = z_objects[..., self.node_feature_dim:]        # [B, N, node_conditioning_dim]
-        
-        # For spatial message passing, assume the first 3 dimensions of the evolving state are positions.
-        pos = evolving_state[..., :3]  # [B, N, 3]
-        
-        # Compute pairwise relative positions and distances.
+        # For message passing, use the full augmented state.
+        # Compute relative position from the evolving part (assume first 3 dims are position).
+        pos = evolving[..., :3]  # [B, N, 3]
         diff = pos.unsqueeze(2) - pos.unsqueeze(1)  # [B, N, N, 3]
         dist = torch.norm(diff, dim=-1, keepdim=True)  # [B, N, N, 1]
+
+
+        pos_static = static[..., :3]
+        diff_static = pos_static.unsqueeze(2) - pos_static.unsqueeze(1)  # [B, N, N, 3]
+        dist_static = torch.norm(diff_static, dim=-1, keepdim=True)  # [B, N, N, 1]
         
-        # For message passing, use the full state (concatenate evolving state and conditioning).
-        # Expand the full state for each edge.
-        x_i = z_objects.unsqueeze(2).expand(B, N, N, D)  # [B, N, N, total_dim]
-        x_j = z_objects.unsqueeze(1).expand(B, N, N, D)  # [B, N, N, total_dim]
+        # Expand full augmented state for each edge.
+        x_i = z_aug.unsqueeze(2).expand(B, N, N, self.augmented_dim)
+        x_j = z_aug.unsqueeze(1).expand(B, N, N, self.augmented_dim)
+        edge_features = torch.cat([x_i, x_j, diff, dist, diff_static, dist_static], dim=-1)  # shape: [B, N, N, 2*augmented_dim + 8]
         
-        # Concatenate edge features: [state_i, state_j, relative position, distance]
-        edge_features = torch.cat([x_i, x_j, diff, dist], dim=-1)  # [B, N, N, 2*total_dim + 4]
+        # Compute edge messages.
+        edge_messages = self.edge_net(edge_features)  # [B, N, N, original_dim]
+        agg_message = edge_messages.sum(dim=2)         # [B, N, original_dim]
         
-        # Compute messages for each edge.
-        edge_messages = self.edge_net(edge_features)  # [B, N, N, node_feature_dim]
+        # Update input: concatenate evolving part with aggregated message.
+        update_input = torch.cat([evolving, agg_message], dim=-1)  # [B, N, 2*original_dim]
+        d_evolving = self.update_net(update_input)  # [B, N, original_dim]
         
-        # Aggregate messages for each node (sum over the second node index).
-        agg_message = edge_messages.sum(dim=2)  # [B, N, node_feature_dim]
-        
-        # Concatenate the evolving state and the aggregated message.
-        update_input = torch.cat([evolving_state, agg_message], dim=-1)  # [B, N, 2*node_feature_dim]
-        
-        # Compute derivative for the evolving part.
-        d_evolving = self.update_net(update_input)  # [B, N, node_feature_dim]
-        
-        # The conditioning part should remain constant.
-        d_conditioning = torch.zeros(B, N, self.node_conditioning_dim, device=z_objects.device, dtype=z_objects.dtype)
-        
-        # Concatenate to form the full derivative.
-        dz = torch.cat([d_evolving, d_conditioning], dim=-1)  # [B, N, total_dim]
-        
+        # Static part remains constant.
+        d_static = torch.zeros(B, N, self.original_dim, device=z_aug.device, dtype=z_aug.dtype)
+        dz_aug = torch.cat([d_evolving, d_static], dim=-1)  # [B, N, 2*original_dim]
         self.nfe += 1
-        return dz
-    
+        return dz_aug
 
-
-class GraphNeuralODE(nn.Module):
-    def __init__(self, node_feature_dim, node_conditioning_dim, hidden_dim=256, n_hidden_layers=4,
+# =============================================
+# Augmented GraphNeuralODE Module
+# =============================================
+class AugmentedGraphNeuralODE(nn.Module):
+    def __init__(self, original_dim, hidden_dim=256, n_hidden_layers=4,
                  solver="rk4", rtol=1e-4, atol=1e-5, options={"step_size": 0.04}, device="cpu"):
         """
-        Graph Neural ODE that only operates on object nodes.
+        Graph Neural ODE with augmentation.
         
-        Args:
-            node_dim (int): Dimension of the node features (e.g., 13).
-            hidden_dim (int): Hidden layer size.
-            n_hidden_layers (int): Number of hidden layers in the ODE function.
-            solver (str): ODE solver to use.
-            rtol (float): Relative tolerance.
-            atol (float): Absolute tolerance.
-            options (dict): Additional solver options.
-            device (str): Device to run the model on.
+        Given an initial explicit state z0 of dimension original_dim, we form an augmented state:
+            z0_aug = [z0, z0]  (dimension 2*original_dim)
+        The dynamic part (first half) is evolved; the second half is kept constant.
         """
-        super(GraphNeuralODE, self).__init__()
-        total_dim = node_feature_dim + node_conditioning_dim
-        self.func = GraphNeuralODEFunc(node_feature_dim, node_conditioning_dim, hidden_dim, n_hidden_layers).to(device)
-       
-        # self.func = GraphNeuralODEFunc(node_dim, hidden_dim, n_hidden_layers).to(device)
+        super(AugmentedGraphNeuralODE, self).__init__()
+        self.original_dim = original_dim
+        self.augmented_dim = 2 * original_dim
+        self.func = AugmentedGraphNeuralODEFunc(original_dim, hidden_dim, n_hidden_layers).to(device)
         self.solver = solver
         self.rtol = rtol
         self.atol = atol
         self.options = options
         self.device = device
-        # Move the entire model to device
         self.to(device)
-
-    def forward(self, z0_object, t_span):
+        self.z0_offset = nn.Parameter(torch.zeros(1, 1, self.augmented_dim, device=device))
+    def forward(self, z0_explicit, t_span):
         """
-        Simulate the object dynamics.
-        
-        Args:
-            z0_object: Tensor of shape [B, N, D], the initial node states.
-            t_span: 1D tensor of timesteps at which to evaluate the solution.
-            
+        z0_explicit: [B, N, original_dim] explicit initial state.
         Returns:
-            traj_objects: Tensor of shape [B, T, N, D] representing the object state trajectory.
-            D: Dimension of the object state (e.g., 13 for [pos, quat, vel, omega]).
+            explicit_traj: [B, T, N, original_dim] trajectory for the evolving part.
+            (The static part remains equal to the initial state.)
         """
-        # Ensure inputs are on the correct device
-        z0_object = z0_object.to(self.device)
+        # Augment z0 by concatenating it with itself.
+        z0_aug = torch.cat([z0_explicit, z0_explicit], dim=-1)  # [B, N, 2*original_dim]
+        z0_aug = z0_aug.to(self.device)
         t_span = t_span.to(self.device)
-
-        traj = odeint(self.func, z0_object, t_span, method=self.solver, rtol=self.rtol, atol=self.atol, options=self.options)
-        
-        traj_objects = traj.permute(1, 0, 2, 3) # [T, B, N, D] -> [B, T, N, D] 
-        
-        return traj_objects
+        traj_aug = odeint(self.func, z0_aug, t_span, method=self.solver,
+                            rtol=self.rtol, atol=self.atol, options=self.options)
+        # traj_aug shape: [T, B, N, 2*original_dim]. Permute to [B, T, N, 2*original_dim]
+        traj_aug = traj_aug.permute(1, 0, 2, 3)
+        # Extract the evolving part (first half) as our explicit trajectory.
+        explicit_traj = traj_aug[..., :self.original_dim]  # [B, T, N, original_dim]
+        return explicit_traj

@@ -491,6 +491,22 @@ class GaussianModel:
         self.inverse_opacity_activation     = inverse_sigmoid
         self.rotation_activation            = torch.nn.functional.normalize
 
+    def update_from_checkpoint(self, checkpoint):
+        """Update Gaussian model parameters directly from a checkpoint without using Scene."""
+        (self.active_sh_degree,
+         self._xyz,
+         self._features_dc,
+         self._features_rest,
+         self._scaling,
+         self._rotation,
+         self._opacity,
+         self.max_radii2D,
+         self.xyz_gradient_accum,
+         self.denom,
+         opt_dict,
+         self.spatial_lr_scale,
+         self._semantic_feature) = checkpoint
+
 
     def capture(self):
         return (
@@ -690,6 +706,26 @@ class GaussianModel:
         #                                             lr_final        = training_args.position_lr_final * self.spatial_lr_scale,
         #                                             lr_delay_mult   = training_args.position_lr_delay_mult,
         #                                             max_steps       = training_args.position_lr_max_steps)
+
+    def training_setup_arap(self, training_args):
+        self._xyz = nn.Parameter(self._xyz, requires_grad=True)
+        self._rotation = nn.Parameter(self._rotation, requires_grad=True)
+        self._opacity = nn.Parameter(self._opacity, requires_grad=False)
+        self._scaling = nn.Parameter(self._scaling, requires_grad=False)
+        self._features_dc = nn.Parameter(self._features_dc, requires_grad=False)
+        self._features_rest = nn.Parameter(self._features_rest, requires_grad=False)
+        self._semantic_feature = nn.Parameter(self._semantic_feature, requires_grad=False)
+
+        l = [
+            {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
+            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
+        ]
+        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init         = training_args.position_lr_init * self.spatial_lr_scale,
+                                                    lr_final        = training_args.position_lr_final * self.spatial_lr_scale,
+                                                    lr_delay_mult   = training_args.position_lr_delay_mult,
+                                                    max_steps       = training_args.position_lr_max_steps)
+
 
     def training_setup_t(self, training_args):
         self._xyz = nn.Parameter(self._xyz.detach(), requires_grad=True)

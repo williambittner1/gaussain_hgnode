@@ -7,8 +7,8 @@ import os
 from scene.gaussian_model import GaussianModel
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 from scene.cameras import Camera
-from scene.dataset_readers import readBlenderSyntheticInfo, readNerfSyntheticInfo, readStaticBlenderSyntheticInfo
-from utils.camera_utils import cameraObjects_from_cameraInfos
+from scene.blender_dataset_reader import readSceneInfoBlender
+from utils.camera_utils import cameraObjectsNoImage_from_cameraInfos
 
 
 class Scene:
@@ -17,20 +17,15 @@ class Scene:
         self.gaussians = None
         self.train_cameras = {}
         self.test_cameras = {}
-        self.scene_type = "manual"
-        # old
-        # self.dataset_path = config.experiment.data_path
-        # self.scene_info = readBlenderSyntheticInfo(self.dataset_path, white_background=False)
-        # new
         self.dataset_path = scene_path
-        self.scene_info = readStaticBlenderSyntheticInfo(self.dataset_path, white_background=False)
+
+        print("Read Scene Info")
+        self.scene_info = readSceneInfoBlender(self.dataset_path, white_background=False)
         
-        #self.scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.foundation_model, args.white_background, args.eval)
-        # self.scene_info = readNerfSyntheticInfo(self.dataset_path, foundation_model=None, white_background=False, eval=False, extension=".jpg")
         self.cameras_extent = self.scene_info.nerf_normalization["radius"]
         
-        print("Loading Training Cameras")
-        self.train_camera_objects = cameraObjects_from_cameraInfos(camera_infos=self.scene_info.cameras, args=config)
+        print("Create Training Camera Objects")
+        self.train_camera_objects = cameraObjectsNoImage_from_cameraInfos(camera_infos=self.scene_info.cameras, args=config)
         self.train_cameras = self.scene_info.cameras
 
 

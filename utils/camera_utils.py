@@ -10,7 +10,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
-from scene.cameras import Camera, Cameras
+from scene.cameras import Camera, Camera_noImage
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
@@ -113,8 +113,20 @@ def loadCam(args, id, frame: FrameInfo, resolution_scale):
         data_device=args.data_device
     )
 
+def createCamObject_noImage(args, camera_infos):
+    return Camera_noImage(
+        colmap_id=camera_infos.uid,
+        R=camera_infos.R,
+        T=camera_infos.T,
+        FoVx=camera_infos.FoVx,
+        FoVy=camera_infos.FoVy,
+        width=camera_infos.width,
+        height=camera_infos.height,
+        uid=camera_infos.uid,
+        data_device=args.data_device
+    )
 
-def createCamObject1(args, camera_infos):
+def createCamObject(args, camera_infos):
 
     loaded_mask = None
     gt_image = torch.from_numpy(np.array(camera_infos.frames[0].image)) / 255.0
@@ -136,7 +148,7 @@ def createCamObject1(args, camera_infos):
 
 
 
-def createCamObject(args, camera_info):
+def createCamObject_video(args, camera_info):
     gt_image = torch.from_numpy(np.array(camera_info.image)).float().cuda() / 255.0
     gt_semantic_feature = camera_info.semantic_feature
     loaded_mask = torch.ones_like(gt_image).cuda()
@@ -172,7 +184,11 @@ def cameraList_from_frameInfos(frame_infos, resolution_scale, args):
         camera_list.append(loadCam(args, id, frame_info, resolution_scale))
     return camera_list
 
-
+def cameraObjectsNoImage_from_cameraInfos(camera_infos, args):
+    camera_objects = []
+    for id, camera_info in enumerate(camera_infos):
+        camera_objects.append(createCamObject_noImage(args, camera_info))
+    return camera_objects
 
 def cameraObjects_from_cameraInfos(camera_infos, args):
     camera_objects = []
