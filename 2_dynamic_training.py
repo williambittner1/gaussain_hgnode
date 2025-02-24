@@ -24,6 +24,7 @@ from pointnet.semantic_segmentation.pointnet2_sem_seg import get_model
 from gaussian_renderer_gsplat import render
 from models.segmenter import PointNetSegmenter
 from models.msgnode import MSGNODEProcessor
+from gaussian_renderer_gsplat import render_batch, render
 
 from dataset import GM_Dataset
 
@@ -35,7 +36,10 @@ class ExperimentConfig:
     dataset_path: str = f"{data_path}/{dataset_name}"
     gm_output_path: str = f"{dataset_path}/"
     data_device: str = "cuda"
-
+    
+    framerate: int = 25
+    dataset_initial_length: int = 10
+    loss_threshold: float = 1e-3
 
 # Static gaussian model optimization config
 @dataclass
@@ -70,6 +74,7 @@ class OptimizationConfig:
     batch_size = 1
     initial_segment_length = 4
     photometric_loss_length = 3
+    learning_rate = 1e-3
 
 @dataclass
 class PipelineConfig:
@@ -108,345 +113,36 @@ class Config:
     optimization: OptimizationConfig = OptimizationConfig()
     pipeline: PipelineConfig = PipelineConfig()
 
-
-
-class GM_Dataset1(Dataset):
-    def __init__(self, config):
-        self.config = config
-        self.dataset_path = config.experiment.dataset_path
-        self.scenes = []
-        self.gaussian_models_t0 = []  # GM0
-        self.gaussian_models_t1 = []  # GM1
-        self.gt_images = {}  # Dictionary to store gt images by scene_idx
-        self.gt_videos = {}  # Dictionary to store gt videos by scene_idx
-        self.to_tensor = T.ToTensor()
-
-        # List subdirectories that start with "sequence"
-        self.scene_dirs = sorted([
-            os.path.join(self.dataset_path, d)
-            for d in os.listdir(self.dataset_path)
-            if os.path.isdir(os.path.join(self.dataset_path, d)) and d.startswith("sequence")
-        ])
-
-        if len(self.scene_dirs) == 0:
-            raise ValueError(f"No scene directories found in {self.dataset_path}.")
-        
-        # Load scenes, gaussians, and ground truth data during initialization
-        self.load_all_data()
-
-    def load_all_data(self):
-        """Load all scenes, gaussian models, and ground truth data."""
-        for idx, sequence in enumerate(self.scene_dirs):
-            # Load scene
-            scene = Scene(config=self.config, scene_path=sequence)
-            cam_stack = scene.getTrainCameraObjects()
-            
-            # Load GM0 (t=0) and GM1 (t=1)
-            gm0_checkpoint = os.path.join(sequence, "gm_checkpoints", "GM0.pth")
-            gm1_checkpoint = os.path.join(sequence, "gm_checkpoints", "GM1.pth")
-            
-            if not (os.path.exists(gm0_checkpoint) and os.path.exists(gm1_checkpoint)):
-                raise FileNotFoundError(f"Missing Gaussian model checkpoints in {sequence}/gm_checkpoints/")
-            
-            # Initialize and load GM0
-            gm0 = GaussianModel(sh_degree=3)
-            scene.load_gaussians_from_checkpoint(gm0_checkpoint, gm0, self.config.optimization)
-            
-            # Initialize and load GM1
-            gm1 = GaussianModel(sh_degree=3)
-            scene.load_gaussians_from_checkpoint(gm1_checkpoint, gm1, self.config.optimization)
-            
-            self.scenes.append(scene)
-            self.gaussian_models_t0.append(gm0)
-            self.gaussian_models_t1.append(gm1)
-
-
-
-
-
-
-
-
-            # # Load ground truth images and videos
-            # self.gt_images[idx] = {}
-            # self.gt_videos[idx] = {}
-            
-            # # Load static images (t=0)
-            # static_dir = os.path.join(sequence, "static")
-            # if os.path.exists(static_dir):
-            #     for img_file in sorted(os.listdir(static_dir)):
-            #         if img_file.endswith('.png'):
-            #             cam_id = os.path.splitext(img_file)[0]
-            #             img_path = os.path.join(static_dir, img_file)
-            #             img = Image.open(img_path).convert("RGB")
-            #             self.gt_images[idx][cam_id] = self.to_tensor(img)
-
-            # # Load dynamic videos (t>0)
-            # dynamic_dir = os.path.join(sequence, "dynamic")
-            # if os.path.exists(dynamic_dir):
-            #     for video_file in sorted(os.listdir(dynamic_dir)):
-            #         if video_file.endswith('.mp4'):
-            #             cam_id = os.path.splitext(video_file)[0]
-            #             video_path = os.path.join(dynamic_dir, video_file)
-            #             cap = cv2.VideoCapture(video_path)
-            #             frames = []
-            #             while cap.isOpened():
-            #                 ret, frame = cap.read()
-            #                 if not ret:
-            #                     break
-            #                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            #                 frame = self.to_tensor(frame)
-            #                 frames.append(frame)
-            #             cap.release()
-            #             self.gt_videos[idx][cam_id] = torch.stack(frames)
-
-        print(f"Loaded {len(self.scenes)} scenes with their gaussian models (GM0 and GM1) and ground truth data.")
-
-    def __len__(self):
-        return len(self.scene_dirs)
-
-    def __getitem__1(self, idx):
-        """Get a scene, its cameras, gaussian models, and ground truth data."""
-        return {
-            'scene': self.scenes[idx],
-            'gaussians0': self.gaussian_models_t0[idx],  # GM0 (t=0)
-            'gaussians1': self.gaussian_models_t1[idx],  # GM1 (t=1)
-            'scene_path': self.scene_dirs[idx],
-            'gt_images': self.gt_images[idx],
-            'gt_videos': self.gt_videos[idx]
-        }
-
-    def __getitem__2(self, idx_tuple):
-        """Get data for a specific sequence and timestep.
-        
-        Args:
-            sequence_idx (int): Index of the sequence directory
-            time_index (int): Time index to retrieve (0 for static image, >0 for video frame)
-            
-        Returns:
-            dict: Contains scene_dir and gt_images tensor
-        """
-        if isinstance(idx_tuple, tuple):
-            sequence_idx, time_index = idx_tuple
-        # Get the scene directory path
-        scene_dir = self.scene_dirs[sequence_idx]
-
-        dynamic_dir = os.path.join(scene_dir, "dynamic") 
-        video_files = sorted([f for f in os.listdir(dynamic_dir) if f.endswith(".mp4")])
-
-        frames = []
-        for video_file in video_files:
-            video_path = os.path.join(dynamic_dir, video_file)
-            cap = cv2.VideoCapture(video_path)
-            
-            # Set frame position and read frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, time_index)
-            ret, frame = cap.read()
-            cap.release()
-            
-            if not ret:
-                raise RuntimeError(f"Could not read frame {time_index} from {video_path}")
-            
-            # Convert BGR to RGB
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame = Image.fromarray(frame)
-            frame_tensor = self.to_tensor(frame)
-            frames.append(frame_tensor)
-            
-        # Stack all frames into a single tensor
-        frames_tensor = torch.stack(frames)
-
-        sample = {
-            'scene': self.scenes[sequence_idx],
-            'GM0': self.gaussian_models_t0[sequence_idx],  # GM0 (t=0)
-            'GM1': self.gaussian_models_t1[sequence_idx],  # GM1 (t=1)
-            'scene_path': self.scene_dirs[sequence_idx],
-            "gt_images": frames_tensor
-        }
-
-        return sample
-
-    def __getitem__3(self, idx):
-        # If idx is a tuple, extract both the sequence index and the specific time index.
-        # Otherwise, treat idx as the sequence index and load all frames.
-        if isinstance(idx, tuple):
-            sequence_idx, time_index = idx
-        else:
-            sequence_idx = idx
-            time_index = None
-
-        # Get the scene directory path.
-        scene_dir = self.scene_dirs[sequence_idx]
-        dynamic_dir = os.path.join(scene_dir, "dynamic")
-        video_files = sorted([f for f in os.listdir(dynamic_dir) if f.endswith(".mp4")])
-
-        frames = []
-        for video_file in video_files:
-            video_path = os.path.join(dynamic_dir, video_file)
-            cap = cv2.VideoCapture(video_path)
-            if time_index is None:
-                # Load all frames for this camera.
-                video_frames = []
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame = Image.fromarray(frame)
-                    frame_tensor = self.to_tensor(frame)
-                    video_frames.append(frame_tensor)
-                cap.release()
-                # Stack frames: shape (num_frames, C, H, W)
-                video_tensor = torch.stack(video_frames)
-            else:
-                # Load only the specific frame.
-                cap.set(cv2.CAP_PROP_POS_FRAMES, time_index)
-                ret, frame = cap.read()
-                cap.release()
-                if not ret:
-                    raise RuntimeError(f"Could not read frame {time_index} from {video_path}")
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = Image.fromarray(frame)
-                video_tensor = self.to_tensor(frame)
-            frames.append(video_tensor)
-
-        # If all frames were loaded, the result will be a list where each element is a tensor 
-        # of shape (num_frames, C, H, W). Otherwise, each element is (C, H, W).
-        if time_index is None:
-            # Stack along a new dimension for cameras: shape (num_cameras, num_frames, C, H, W)
-            frames_tensor = torch.stack(frames)
-        else:
-            # Stack to shape (num_cameras, C, H, W)
-            frames_tensor = torch.stack(frames)
-
-        sample = {
-            'scene': self.scenes[sequence_idx],
-            'GM0': self.gaussian_models_t0[sequence_idx],
-            'GM1': self.gaussian_models_t1[sequence_idx],
-            'scene_path': scene_dir,
-            'gt_images': frames_tensor
-        }
-        return sample
-
-
-    def __getitem__(self, idx_input):
-        """
-        If a tuple (sequence_idx, time_index) is provided, load the specific frame from each camera.
-        Otherwise, return metadata (e.g. dynamic video file paths) so that frames can be loaded later.
-        """
-        # Allow idx_input to be an int or tuple
-        if isinstance(idx_input, tuple):
-            sequence_idx, time_index = idx_input
-        else:
-            sequence_idx = idx_input
-            time_index = None
-
-        scene_dir = self.scene_dirs[sequence_idx]
-        dynamic_dir = os.path.join(scene_dir, "dynamic")
-        # Get full video file paths for each camera
-        video_paths = sorted([
-            os.path.join(dynamic_dir, f)
-            for f in os.listdir(dynamic_dir) if f.endswith(".mp4")
-        ])
-
-        if time_index is not None:
-            # Load only the specified frame from each video
-            frames = []
-            for video_path in video_paths:
-                cap = cv2.VideoCapture(video_path)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, time_index)
-                ret, frame = cap.read()
-                cap.release()
-                if not ret:
-                    raise RuntimeError(f"Could not read frame {time_index} from {video_path}")
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = Image.fromarray(frame)
-                frame_tensor = self.to_tensor(frame)
-                frames.append(frame_tensor)
-            # Stack into tensor of shape (num_cameras, C, H, W)
-            gt_images = torch.stack(frames)
-        else:
-            # Return the video file paths instead of loading all frames.
-            # Later, during loss computation, you can load the needed frame using the path.
-            gt_images = video_paths
-
-        sample = {
-            "scene_path": scene_dir,
-            "video_paths": video_paths,
-            "GM0": self.gaussian_models_t0[sequence_idx],
-            "GM1": self.gaussian_models_t1[sequence_idx],
-        }
-        return sample
-
-
-
-
-    def get_all_scenes(self):
-        """Return all scenes."""
-        return self.scenes
-
-    def get_all_gaussians(self):
-        """Return all gaussian model pairs (GM0, GM1)."""
-        return list(zip(self.gaussian_models_t0, self.gaussian_models_t1))
-
-    def get_scene_and_gaussians(self, idx):
-        """Get a specific scene and its gaussian models."""
-        return self.scenes[idx], self.gaussian_models_t0[idx], self.gaussian_models_t1[idx]
-
-    def get_gt_data(self, scene_idx, cam_id=None, timestep=None):
-        """
-        Get ground truth data for a specific scene, camera, and timestep.
-        
-        Args:
-            scene_idx: Index of the scene
-            cam_id: Camera ID (e.g., "cam001"). If None, returns all cameras.
-            timestep: Timestep to retrieve. If None, returns all timesteps.
-                     If 0, returns static image. If >0, returns video frame.
-        """
-        if timestep == 0:
-            data = self.gt_images[scene_idx]
-            return data if cam_id is None else data.get(f"{cam_id}_img000")
-        else:
-            videos = self.gt_videos[scene_idx]
-            if cam_id is None:
-                return videos
-            video = videos.get(f"{cam_id}_vid")
-            return video if timestep is None else video[timestep-1] if video is not None else None
-
-
-def visualize_gaussians(scene, gaussians, config, background, cam_stack, iteration=None):
+# Modified visualization functions to handle list-based data
+def visualize_gaussians(scene, gaussians, config, background, cam_stack, gt_frame, iteration=None):
     for cam_idx, camera in enumerate(cam_stack):
         render_pkg = render(camera, gaussians, config.pipeline, bg_color=background)
         rendered_image = render_pkg["render"].detach().cpu().numpy().transpose(1, 2, 0)
-        gt_image = camera.original_image.cpu().numpy()
         
+        gt_image = gt_frame[cam_idx].permute(1, 2, 0).cpu().numpy()
         H, W, C = rendered_image.shape
-        white_line = np.full((H, 2, C), 255, dtype=np.uint8)  # 2-pixel wide white line
         
+        white_line = np.full((H, 2, C), 255, dtype=np.uint8)
         combined_image = np.concatenate([rendered_image, white_line, gt_image], axis=1)
-
         combined_image = (combined_image * 255).astype(np.uint8)
             
         wandb.log({f"combined_{cam_idx}": wandb.Image(combined_image)}, step=iteration)
     print(f"Logged render and gt")
 
-
-def visualize_gaussians_semantic_colors(scene, gaussians, config, background, cam_stack, iteration=None):
+def visualize_gaussians_semantic_colors(scene, gaussians, config, background, cam_stack, gt_frame, iteration=None):
     for cam_idx, camera in enumerate(cam_stack):
         render_pkg = render(camera, gaussians, config.pipeline, bg_color=background, override_color=gaussians.semantic_class_color)
         rendered_image = render_pkg["render"].detach().cpu().numpy().transpose(1, 2, 0)
-        gt_image = camera.original_image.cpu().numpy()
+        gt_image = gt_frame[cam_idx].permute(1, 2, 0).cpu().numpy()
         
         H, W, C = rendered_image.shape
-        white_line = np.full((H, 2, C), 255, dtype=np.uint8)  # 2-pixel wide white line
+        white_line = np.full((H, 2, C), 255, dtype=np.uint8)
         
         combined_image = np.concatenate([rendered_image, white_line, gt_image], axis=1)
-
         combined_image = (combined_image * 255).astype(np.uint8)
             
         wandb.log({f"combined_{cam_idx}": wandb.Image(combined_image)}, step=iteration)
     print(f"Logged render and gt")
-
 
 def visualize_gaussians_cluster_colors(scene, gaussians, config, background, cam_stack, iteration=None):
     for cam_idx, camera in enumerate(cam_stack):
@@ -455,10 +151,9 @@ def visualize_gaussians_cluster_colors(scene, gaussians, config, background, cam
         gt_image = camera.original_image.cpu().numpy()
         
         H, W, C = rendered_image.shape
-        white_line = np.full((H, 2, C), 255, dtype=np.uint8)  # 2-pixel wide white line
+        white_line = np.full((H, 2, C), 255, dtype=np.uint8)
         
         combined_image = np.concatenate([rendered_image, white_line, gt_image], axis=1)
-
         combined_image = (combined_image * 255).astype(np.uint8)
             
         wandb.log({f"combined_{cam_idx}": wandb.Image(combined_image)}, step=iteration)
@@ -517,13 +212,15 @@ def get_nearest_neighbor_features(points, features, labels, query_points, k=1):
     return nn_features, nn_labels
 
 
-def extract_features(GM0s, GM1s, segmenter):
+def extract_features_batch(GM0s, GM1s, segmenter=None, include_semantic=True, include_augm=True):
     """
     Extract features from batches of GM0 and GM1 for ODE integration.
     Args:
         GM0s: List of B GaussianModel objects at t=0
         GM1s: List of B GaussianModel objects at t=1
-        segmenter: Segmenter object for semantic feature extraction
+        segmenter: Optional segmenter object for semantic feature extraction
+        include_semantic: Whether to include semantic features
+        include_augm: Whether to include augmentation features
     Returns:
         z_h_batch: (B, N, feature_dim) - Batched concatenated features
     """
@@ -533,109 +230,182 @@ def extract_features(GM0s, GM1s, segmenter):
     q0_list = []
     q1_list = []
     color_list = []
-    semantic_list = []
     
     for gm0, gm1 in zip(GM0s, GM1s):
         pos0_list.append(gm0.get_xyz)
         pos1_list.append(gm1.get_xyz)
         q0_list.append(gm0.get_rotation)
         q1_list.append(gm1.get_rotation)
-        color_list.append(gm0.colors.float() / 255.0)
-        
+        if include_semantic:
+            color_list.append(gm0.colors.float() / 255.0)
     
     # Stack to create batched tensors
     pos0_batch = torch.stack(pos0_list)      # [B, N, 3]
     pos1_batch = torch.stack(pos1_list)      # [B, N, 3]
     q0_batch = torch.stack(q0_list)          # [B, N, 4]
     q1_batch = torch.stack(q1_list)          # [B, N, 4]
-    color_batch = torch.stack(color_list)     # [B, N, 3]
     
-    
-    # Compute velocities in parallel
+    # Compute velocities
     dt_pos_batch = pos1_batch - pos0_batch    # [B, N, 3]
     
-    # Compute angular velocities in parallel
+    # Compute angular velocities
     q0_inv_batch = quaternion_inverse(q0_batch)  # [B, N, 4]
     q_diff_batch = quaternion_multiply(q1_batch, q0_inv_batch)  # [B, N, 4]
-    
-    # Convert to angular velocity (omega)
     omega_batch = 2 * q_diff_batch[..., 1:] / (q_diff_batch[..., 0:1] + 1e-6)  # [B, N, 3]
-    
 
-    # Semantic Segmentation (PointNet++)
-    semantic_features_batch = []
-    semantic_labels_batch = []
-
-    B = pos0_batch.shape[0]
-    num_sample_points = 1024
-
-    for i in range(B):
-        pos = pos0_batch[i]  # [N, 3]
-        colors = color_batch[i]  # [N, 3]
-        N = pos.shape[0]
-        # Randomly sample 1024 points for segmentation
-        if N > num_sample_points:
-            idx = torch.randperm(N)[:num_sample_points]
-            sample_pos = pos[idx]
-            sample_colors = colors[idx]
-        else:
-            # If we have fewer points, repeat some points
-            idx = torch.randint(N, (num_sample_points,))
-            sample_pos = pos[idx]
-            sample_colors = colors[idx]
-            
-        # Get semantic features for sampled points
-        sample_semantic_features, sample_semantic_labels = segmenter(sample_pos, sample_colors)  # [1024, feature_dim]
-        
-        # Assign features to all points based on nearest sampled point
-        full_semantic_features, full_semantic_labels = get_nearest_neighbor_features(
-            sample_pos, sample_semantic_features, sample_semantic_labels, pos
-        )  # [N, feature_dim], [N]
-       
-        semantic_features_batch.append(full_semantic_features)
-        semantic_labels_batch.append(full_semantic_labels)
-
-    semantic_features_batch = torch.stack(semantic_features_batch)  # [B, N, feature_dim]
-    semantic_labels_batch = torch.stack(semantic_labels_batch).unsqueeze(-1)  # [B, N, 1]
-
-    # Store labels in gaussian models for visualization
-    for i, gm0 in enumerate(GM0s):
-        gm0.semantic_labels = semantic_labels_batch[i]
-
-
-    # Create augmented working space
-    B, N, _ = pos0_batch.shape
-    augm_batch = torch.zeros(B, N, 49, device=pos0_batch.device)
-    
-    # Concatenate all features
-    z_h_batch = torch.cat([
+    # Base features list
+    feature_list = [
         pos0_batch,             # [B, N, 3]
         dt_pos_batch,           # [B, N, 3]
         q0_batch,               # [B, N, 4]
         omega_batch,            # [B, N, 3]
-        color_batch,            # [B, N, 3]
-        semantic_features_batch,# [B, N, num_classes]
-        semantic_labels_batch,   # [B, N, 1]
-        augm_batch              # [B, N, 49]
-    ], dim=-1)                  # [B, N, 66]
-    
+    ]
+
+    if include_semantic:
+        if segmenter is None:
+            raise ValueError("Segmenter must be provided when include_semantic=True")
+            
+        color_batch = torch.stack(color_list)     # [B, N, 3]
+        semantic_features_batch = []
+        semantic_labels_batch = []
+        B = pos0_batch.shape[0]
+        num_sample_points = 1024
+
+        for i in range(B):
+            pos = pos0_batch[i]
+            colors = color_batch[i]
+            N = pos.shape[0]
+            
+            # Sample points for segmentation
+            if N > num_sample_points:
+                idx = torch.randperm(N)[:num_sample_points]
+                sample_pos = pos[idx]
+                sample_colors = colors[idx]
+            else:
+                idx = torch.randint(N, (num_sample_points,))
+                sample_pos = pos[idx]
+                sample_colors = colors[idx]
+            
+            # Get semantic features
+            sample_semantic_features, sample_semantic_labels = segmenter(sample_pos, sample_colors)
+            
+            # Assign features to all points
+            full_semantic_features, full_semantic_labels = get_nearest_neighbor_features(
+                sample_pos, sample_semantic_features, sample_semantic_labels, pos
+            )
+            
+            semantic_features_batch.append(full_semantic_features)
+            semantic_labels_batch.append(full_semantic_labels)
+
+        semantic_features_batch = torch.stack(semantic_features_batch)
+        semantic_labels_batch = torch.stack(semantic_labels_batch).unsqueeze(-1)
+
+        # Store labels for visualization
+        for i, gm0 in enumerate(GM0s):
+            gm0.semantic_labels = semantic_labels_batch[i]
+
+        feature_list.extend([
+            color_batch,
+            semantic_features_batch,
+            semantic_labels_batch,
+        ])
+
+    if include_augm:
+        B, N, _ = pos0_batch.shape
+        augm_batch = torch.zeros(B, N, 49, device=pos0_batch.device)
+        feature_list.append(augm_batch)
+
+    # Concatenate all features
+    z_h_batch = torch.cat(feature_list, dim=-1)
     
     return z_h_batch
+
+def extract_features(GM0, GM1, segmenter, include_semantic=False, include_augm=False, augm_dim=9):
+    """Extract features from a single pair of Gaussian models"""
+    # Process single sequence
+    xyz0 = GM0.get_xyz  # [N, 3]
+    rot0 = GM0.get_rotation  # [N, 4]
+    xyz1 = GM1.get_xyz  # [N, 3]
+    rot1 = GM1.get_rotation  # [N, 4]
+    
+    # Compute velocities
+    vel = xyz1 - xyz0  # [N, 3]
+
+    # Compute angular velocities
+    q0_inv = quaternion_inverse(rot0)  # [N, 4]
+    q_diff = quaternion_multiply(rot1, q0_inv)  # [N, 4]
+    omega = 2 * q_diff[..., 1:] / (q_diff[..., 0:1] + 1e-6)  # [N, 3]
+
+    feature_list = [xyz0, rot0, vel, omega]
+        
+    if include_semantic:
+        if segmenter is None:
+            raise ValueError("Segmenter must be provided when include_semantic=True")
+            
+        color = GM0.colors.float() / 255.0     # [N, 3]
+        pos = xyz0
+        N = pos.shape[0]
+        num_sample_points = 1024
+        
+        # Sample points for segmentation
+        if N > num_sample_points:
+            sparse_idx = torch.randperm(N)[:num_sample_points]
+            sparse_pos = pos[sparse_idx]
+            sparse_colors = color[sparse_idx]
+        else:
+            sparse_idx = torch.randint(N, (num_sample_points,))
+            sparse_pos = pos[sparse_idx]
+            sparse_colors = color[sparse_idx]
+        
+        # Get semantic features for sampled points
+        sparse_semantic_features, sparse_semantic_labels = segmenter(sparse_pos, sparse_colors)
+        
+        # Assign features to all points
+        semantic_features, semantic_labels = get_nearest_neighbor_features(
+                                                            sparse_pos, sparse_semantic_features, sparse_semantic_labels, pos
+                                                        )
+
+        # Store labels for visualization
+        GM0.semantic_labels = semantic_labels
+
+        feature_list.extend([
+            color,
+            semantic_features,
+            semantic_labels,
+        ])
+        
+    if include_augm:
+        B, N, _ = xyz0.shape
+        augm = torch.zeros(B, N, augm_dim, device=xyz0.device)
+        feature_list.append(augm)
+
+    features = torch.cat(feature_list, dim=-1)
+        
+    return features  # [N, F]
 
 def custom_collate(batch):
     """
     Custom collate function that handles batched Scene objects with batch_size = B
     
     Returns:
-        dict: Contains scene, GM0, GM1, frames_tensor, and pseudo_3d_gt
+        dict: Contains scene, GM0, GM1, gt_frame, and pseudo_3d_gt
     """
     return {
+        "seq_idx": [item["seq_idx"] for item in batch],  # List of sequence indices
         "scene": [item["scene"] for item in batch],  # List of B Scene objects
         "GM0": [item["GM0"] for item in batch],      # List of B GM0 models
         "GM1": [item["GM1"] for item in batch],      # List of B GM1 models
-        "frames_tensor": torch.stack([item["frames_tensor"] for item in batch]),  # [B, ...]
-        "pseudo_3d_gt": torch.stack([item["pseudo_3d_gt"] for item in batch])    # [B, ...]
+        # "gt_image": torch.stack([item["gt_image"] for item in batch]),  # [B, ...]
+        # "gt_video": torch.stack([item["gt_video"] for item in batch]),  # [B, ...]
+        # "pseudo_3d_gt": torch.stack([item["pseudo_3d_gt"] for item in batch]),    # [B, ...]
+        "gt_image": [item["gt_image"] for item in batch],  # List of [1, num_cams, H, W, 3]
+        "gt_video": [item["gt_video"] for item in batch],  # List of [T, num_cams, H, W, 3]        
+        "pseudo_3d_gt": [item["pseudo_3d_gt"] for item in batch],  # List of [T, N, 7]
+        "z_h_0": [item["z_h_0"] for item in batch] if "z_h_0" in batch[0] else None,
+        "z_l_0": [item["z_l_0"] for item in batch] if "z_l_0" in batch[0] else None
     }
+
+
 
 # -------------------------------------------------------------------------------------------------
 # Main Training Function
@@ -652,6 +422,7 @@ def train():
 
     batch_size = config.optimization.batch_size
     current_segment_length = config.optimization.initial_segment_length
+    photometric_loss_length = config.optimization.photometric_loss_length
 
     ##########################################  
     # 0. Load Dataset (GM0, GM1, gt_images, gt_videos)
@@ -659,7 +430,6 @@ def train():
 
     train_path = os.path.join(config.experiment.dataset_path, "train")
     dataset = GM_Dataset(config, train_path)
-    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
 
     # test_path = os.path.join(config.experiment.dataset_path, "test")
     # test_dataset = GM_Dataset(config, test_path)
@@ -675,97 +445,163 @@ def train():
     pointnet_ssg_model.load_state_dict(checkpoint['model_state_dict'])
     pointnet_ssg_model.eval()
 
-    segmenter = PointNetSegmenter(num_classes=2, num_sample_points=1024, knn_k=10, device="cuda")
+    segmenter = PointNetSegmenter(num_classes=2, num_sample_points=1024, knn_k=8, device="cuda")
     loss_fn = nn.MSELoss(reduction="mean")
 
-    processor = MSGNODEProcessor(feature_dim=67, message_dim=64, hidden_dim=256)
+    processor = MSGNODEProcessor(feature_dim=13, message_dim=64, hidden_dim=256, device=device)
 
     optimizer = optim.Adam(
         list(processor.parameters()), #+ list(pointnet_ssg_model.parameters()),
-        lr=config.experiment.learning_rate
+        lr=config.optimization.learning_rate
     )
+
+    ##########################################
+    # 2. Preprocess Dataset
+    ##########################################
+
+    for seq_idx in range(len(dataset)):
+        scene = dataset.scenes[seq_idx]
+        GM0 = dataset.GM0[seq_idx]
+        GM1 = dataset.GM1[seq_idx]
+        points = extract_features(GM0, GM1, segmenter, include_semantic=False, include_augm=False, augm_dim=9)
+        N = points.shape[0]
+        fine_indices = torch.randperm(N, device=points.device)
+        coarse_indices = torch.randperm(N, device=points.device)[:int(N * 0.01)]
+        dataset.fine_indices[seq_idx] = fine_indices
+        dataset.coarse_indices[seq_idx] = coarse_indices
+        dataset.set_z_h_0_z_l_0(
+            seq_idx,
+            points[fine_indices],
+            points[coarse_indices]
+        )
+    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=custom_collate)
 
     ##########################################
     # 3. Train Loop
     ##########################################
 
-    epoch_bar = tqdm(range(config.optimization.ms_gnode_epochs), desc=f"Training")
+    # Training loop
+    epoch_bar = tqdm(range(config.optimization.ms_gnode_epochs), desc="Training")
     for epoch in epoch_bar:
         epoch_start_time = time.time()
         torch.cuda.empty_cache()
         epoch_loss = 0.0
-        log = {}
 
-        segment_duration = current_segment_length / config.optimization.framerate
+        segment_duration = current_segment_length / config.experiment.framerate
         t_span = torch.linspace(0, segment_duration, current_segment_length, device=device, dtype=torch.float32)
-        
+
+        for batch_idx, batch in enumerate(train_loader):
+            scenes = batch['scene']
+            GM0s = batch['GM0']
+            GM1s = batch['GM1']
+            gt_images = batch['gt_image']  # List of [T, num_cams, H, W, 3]
+            gt_videos = batch['gt_video']  # List of [T, num_cams, H, W, 3]
+            pseudo_3d_gts = batch['pseudo_3d_gt']  # List of [T, N, 7]
+            z_h_0_list = batch['z_h_0']  # List of [N, F]
+            z_l_0_list = batch['z_l_0']  # List of [N_coarse, F]
+            seq_indices = batch['seq_idx']
+            batch_size = len(scenes)
+
+            loss_pseudo3d = 0.0
+            loss_photo = 0.0
+            photo_count = 0
+
+            for b in range(batch_size):
+                # Sequence-specific data
+                z_h_0 = z_h_0_list[b].unsqueeze(0).to(device).detach()  # [1, N, F]
+                z_l_0 = z_l_0_list[b].unsqueeze(0).to(device).detach()  # [1, N_coarse, F]
+                pseudo_3d_gt = pseudo_3d_gts[b].to(device)  # [T, N, 7]
+                gt_image = gt_images[b].to(device)  # [T, num_cams, H, W, 3]
+                scene = scenes[b]
+                GM0 = GM0s[b]
+                GM1 = GM1s[b]
+
+                # Get fine indices for this sequence
+                seq_idx = seq_indices[b]  # Correct sequence index
+                fine_indices = dataset.fine_indices[seq_idx].to(device)
+
+                # Processor forward pass
+                processor.ode_func.reset_edges()
+                processor.ode_func.nfe = 0
+                z_h_traj, z_l_traj = processor(z_h_0, z_l_0, t_span)  # [B=1, T, N, F]
+
+                # Compute pseudo 3D loss
+                pseudo_loss_length = max(0, current_segment_length - photometric_loss_length)
+                seq_loss_pseudo3d = F.mse_loss(
+                    z_h_traj[0, :pseudo_loss_length, :, :7],
+                    pseudo_3d_gt[:pseudo_loss_length, fine_indices, :7]
+                )
+                loss_pseudo3d += seq_loss_pseudo3d
+
+                # Compute photometric loss
+                tmp_gaussians_pred = GM0.clone()
+                num_train_cams = 5
+                for t in range(pseudo_loss_length, current_segment_length):
+                    tmp_gaussians_pred.update_gaussians(
+                        z_h_traj[0, t, :, :3],
+                        z_h_traj[0, t, :, 3:7]
+                    )
+
+                    cam_stack = scene.getTrainCameraObjects()
+                    viewpoint_cams = cam_stack[:num_train_cams]
+                    render_pkg_pred = render_batch(viewpoint_cams, tmp_gaussians_pred, config.pipeline, background)
+                    pred_rendered_image = render_pkg_pred["render"].permute(1, 0, 2, 3)  # [C, H, W, 3]
+                    gt_image_t = gt_image[:num_train_cams].permute(0, 2, 3, 1)  # [C, H, W, 3]
+                    loss_i = F.mse_loss(pred_rendered_image, gt_image_t)
+                    loss_photo += loss_i
+                    photo_count += 1
+
+            # Average losses over batch
+            loss_pseudo3d /= batch_size
+            loss_photo /= photo_count if photo_count > 0 else 1
+            batch_loss = (
+                loss_pseudo3d * pseudo_loss_length +
+                loss_photo * photometric_loss_length
+            ) / current_segment_length
+            # batch_loss = loss_pseudo3d
+
+            optimizer.zero_grad()
+            with torch.autograd.detect_anomaly():
+                batch_loss.backward()
+            optimizer.step()
+            epoch_loss += batch_loss.item()
+
+        epoch_loss /= len(train_loader)
 
 
-        for batch in train_loader:
-           
-            scenes          = batch['scene']
-            GM0s            = batch['GM0']
-            GM1s            = batch['GM1']
-            frames_tensors  = batch['frames_tensor']
-            pseudo_3d_gts   = batch['pseudo_3d_gt']
-            batch_size      = len(scenes)
+        if epoch % 10 == 0:
+            visualize_gaussians(scenes[0], GM0s[0], config, background, scenes[0].getTrainCameraObjects()[:1], gt_images[0], iteration=epoch)
 
-
-            points = extract_features(GM0s, GM1s, segmenter)  # [B, N, feature_dim]
-           
-
-            ##########################################
-            # Subsample fine and coarse nodes from gaussians 
-            ##########################################
-            # - Subsample Sparse Gaussians from all/dense Gaussians (e.g. 30% subsampling factor w.r.t. all Gaussians)
-            # - Subsample Coarse Gaussians from Sparse Gaussians (e.g. 10% subsampling factor w.r.t. Sparse Gaussians)
-            # - Dense Gaussians are rigidly/softly connected to the Sparse Gaussians (either by hard-/soft-assignment)
-            # - fine nodes V_h in the Fine Graph G_h are created from Sparse Gaussians (e.g. 30% subsampling factor)
-            # - coarse nodes V_l in the Coarse Graph G_l are created from Coarse Gaussians (e.g. 10% subsampling factor)
-            
-            
-            # Downsample z_h to get z_l by randomly selecting a subset of nodes
-            B, N, F = points.shape 
-            num_fine_nodes = int(N * 0.7)
-            num_coarse_nodes = int(N * 0.01)  # 1% of fine nodes become coarse nodes
-
-            # Generate random indices for this batch
-            # Same indices will be used for all items in batch, but different across batches
-            fine_indices = torch.randperm(N, device=points.device)[:num_fine_nodes]     # [num_fine_nodes]
-            coarse_indices = torch.randperm(N, device=points.device)[:num_coarse_nodes] # [num_coarse_nodes]
-            
-            # Select fine and coarse nodes using broadcasting
-            z_h_0 = points[:, fine_indices]     # [B, num_fine_nodes, F]
-            z_l_0 = points[:, coarse_indices] # [B, num_coarse_nodes, F]
-
-
-            visualize_gaussians_semantic_colors(scenes[0], GM0s[0], config, background, scenes[0].getTrainCameraObjects()[:1], iteration=epoch)
-
-            
-            z_h_traj, z_l_traj = processor(z_h_0, z_l_0, t_span)
-
-
-
-
-            # Compute losses
-            photometric_loss_length = config.optimization.photometric_loss_length
-            pseudo_loss_length = max(0, current_segment_length - photometric_loss_length)
-
-
-
-
-            loss_pseudo3d = F.mse_loss(
-                z_traj[:, :pseudo_loss_length, :, :7],
-                batch_pseudo_gt[:, :pseudo_loss_length, :, :7]
-            )
-
-
-
-
+        epoch_bar.set_postfix({
+            'Loss': f'{batch_loss.item():.7f}',
+            # 'nfe': model.func.nfe,
+            # 'seg_len': current_segment_length,
+            # 'it/s': epochs_per_sec,
+            #'test_loss': log['test_loss']
+        })
 
     
+        # Increment segment length and update Pseudo-GT
+        if epoch > 0 and loss_photo < config.experiment.loss_threshold:
+            current_segment_length += 1
+            
+
+            for seq in range(len(dataset)):
+                z_h_traj, z_l_traj = processor(dataset[seq]["z_h_0"], dataset[seq]["z_l_0"], t_span)
+                last_xyz = z_h_traj[:, -1, :, :3].detach()  # Detach here
+                last_quat = z_h_traj[:, -1, :, 3:7].detach()  # Detach here
+                dataset[seq].update_pseudo_3d_gt(seq, last_xyz.to(device), last_quat.to(device))
+                dataset[seq].update_image(seq, current_segment_length)
+                dataset[seq].update_video(seq, current_segment_length)
+
+            
+
 
 if __name__ == "__main__":
-    # wandb.init(project="2_clustering_and_dynamic_keypoint_debugging")
+    wandb.init(project="2_dynamic_training_debugging")
     train()
-    # wandb.finish()
+    wandb.finish()
+
+
+
+

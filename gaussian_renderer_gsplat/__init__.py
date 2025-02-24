@@ -24,12 +24,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     """
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-    focal_length_x = viewpoint_camera.image_width / (2 * tanfovx)
-    focal_length_y = viewpoint_camera.image_height / (2 * tanfovy)
+    focal_length_x = viewpoint_camera.width / (2 * tanfovx)
+    focal_length_y = viewpoint_camera.height / (2 * tanfovy)
     K = torch.tensor(
         [
-            [focal_length_x, 0, viewpoint_camera.image_width / 2.0],
-            [0, focal_length_y, viewpoint_camera.image_height / 2.0],
+            [focal_length_x, 0, viewpoint_camera.width / 2.0],
+            [0, focal_length_y, viewpoint_camera.height / 2.0],
             [0, 0, 1],
         ],
         device="cuda",
@@ -56,8 +56,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         viewmats=viewmat[None],  # [1, 4, 4]
         Ks=K[None],  # [1, 3, 3]
         backgrounds=bg_color[None],
-        width=int(viewpoint_camera.image_width),
-        height=int(viewpoint_camera.image_height),
+        width=int(viewpoint_camera.width),
+        height=int(viewpoint_camera.height),
         packed=False,
         sh_degree=sh_degree,
     )
@@ -91,17 +91,17 @@ def render_batch(viewpoint_cameras, pc : GaussianModel, pipe, bg_color : torch.T
         viewpoint_camera = viewpoint_cameras
         batch_size = 1
 
-    viewpoint_camera.image_width = 500
-    viewpoint_camera.image_height = 500
+    # viewpoint_camera.width = 500
+    # viewpoint_camera.height = 500
 
     tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
     tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-    focal_length_x = viewpoint_camera.image_width / (2 * tanfovx)
-    focal_length_y = viewpoint_camera.image_height / (2 * tanfovy)
+    focal_length_x = viewpoint_camera.width / (2 * tanfovx)
+    focal_length_y = viewpoint_camera.height / (2 * tanfovy)
     K = torch.tensor(
         [
-            [focal_length_x, 0, viewpoint_camera.image_width / 2.0],
-            [0, focal_length_y, viewpoint_camera.image_height / 2.0],
+            [focal_length_x, 0, viewpoint_camera.width / 2.0],
+            [0, focal_length_y, viewpoint_camera.height / 2.0],
             [0, 0, 1],
         ],
         device="cuda",
@@ -138,8 +138,8 @@ def render_batch(viewpoint_cameras, pc : GaussianModel, pipe, bg_color : torch.T
 
     bg_colors = bg_color[None].repeat(batch_size, 1)
     
-    width = int(viewpoint_camera.image_width)
-    height = int(viewpoint_camera.image_height)
+    width = int(viewpoint_camera.width)
+    height = int(viewpoint_camera.height)
     
     render_colors, render_alphas, info = rasterization(
         means=means3D,  # [N, 3]

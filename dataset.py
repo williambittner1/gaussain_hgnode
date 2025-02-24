@@ -112,13 +112,27 @@ class GM_Dataset(Dataset):
         self.scenes = []
         self.GM0 = []  
         self.GM1 = []  
-        self.frames_tensor = []
+        self.image = []
         self.pseudo_3d_gt = []
+        self.video = []
 
-        self.initialize_data()
+        num_sequences = len(self.scene_dirs)
+        self.fine_indices = [None] * num_sequences
+        self.coarse_indices = [None] * num_sequences
+        self.z_h_0 = [None] * num_sequences
+        self.z_l_0 = [None] * num_sequences
 
+        self.initialize_data(config)
 
-    def initialize_data(self):
+    def set_z_h_0_z_l_0(self, seq_idx, z_h_0, z_l_0):
+        """Store initial features for a sequence"""
+        while len(self.z_h_0) <= seq_idx:
+            self.z_h_0.append(None)
+            self.z_l_0.append(None)
+        self.z_h_0[seq_idx] = z_h_0
+        self.z_l_0[seq_idx] = z_l_0
+
+    def initialize_data(self, config):
         # Load scenes (including camera objects) and gaussians during initialization
         
         for seq_idx, sequence in enumerate(self.scene_dirs):
@@ -172,28 +186,24 @@ class GM_Dataset(Dataset):
 
             # Initialize frames tensor with the first frame of each video
             frames_tensor = self.load_gt_frames(seq_idx, 0)
-            self.frames_tensor.append(frames_tensor)
+            self.image.append(frames_tensor)
 
             # Initialize pseudo_3d_gt with the 3d positions and quaternions of the the GM0 and GM1
             pseudo_3d_gt = self.load_pseudo_3d_gt(seq_idx)
             self.pseudo_3d_gt.append(pseudo_3d_gt)
 
+            # Initialize video with the first 100 frames of each video
+            gt_video = self.load_gt_video(seq_idx, 10)
+            self.video.append(gt_video)
 
-    def __getitem__(self, idx):
-        item = {
-            "scene": self.scenes[idx],
-            "GM0": self.GM0[idx],
-            "GM1": self.GM1[idx],
-            "frames_tensor": self.frames_tensor[idx],
-            "pseudo_3d_gt": self.pseudo_3d_gt[idx]
-        }
-        return item
+
+
     
     def __len__(self):
         return len(self.scenes)
     
 
-    def load_pseudo_3d_gt(self, idx):
+    def load_pseudo_3d_gt(self, seq_idx):
         """
         Initialize pseudo_3d_gt with the 3d positions and quaternions of the GM0 and GM1
         Returns:
@@ -202,12 +212,12 @@ class GM_Dataset(Dataset):
                 - [:, 3:7] are the quaternions (w,x,y,z)
         """
         # Get positions and rotations from GM0
-        xyz0 = self.GM0[idx]._xyz.detach()  # [N, 3]
-        rot0 = self.GM0[idx]._rotation.detach()  # [N, 4] quaternion
+        xyz0 = self.GM0[seq_idx]._xyz.detach()  # [N, 3]
+        rot0 = self.GM0[seq_idx].get_rotation.detach()  # [N, 4] quaternion
 
         # Get positions and rotations from GM1
-        xyz1 = self.GM1[idx]._xyz.detach()  # [N, 3]
-        rot1 = self.GM1[idx]._rotation.detach()  # [N, 4] quaternion
+        xyz1 = self.GM1[seq_idx]._xyz.detach()  # [N, 3]
+        rot1 = self.GM1[seq_idx].get_rotation.detach()  # [N, 4] quaternion
 
         # Concatenate positions and rotations for each timestep
         gt_t0 = torch.cat([xyz0, rot0], dim=-1)  # [N, 7]
@@ -240,26 +250,157 @@ class GM_Dataset(Dataset):
         return torch.stack(frames)
 
 
-    def extend_pseudo_gt(self, idx):
+    def load_gt_video1(self, seq_idx, end_timestep):
         """
-        Extend pseudo_3d_gt with the latest 3d positions and quaternions of the scene
+        Load ground truth frames from timestep 0 up to end_timestep from videos.
+        
+        Args:
+            seq_idx: Index of the sequence to load
+            end_timestep: Last timestep to load (inclusive)
+        
+        Returns:
+            frames_sequence: Tensor of shape [T, num_cams, H, W, 3] containing frames from t=0 to t=end_timestep
+        """
+        frames_sequence = []
+        dynamic_dir = os.path.join(self.scene_dirs[seq_idx], "dynamic")
+        
+        if os.path.exists(dynamic_dir):
+            video_files = sorted([f for f in os.listdir(dynamic_dir) if f.endswith('.mp4')])
+            num_cams = len(video_files)
+            
+            # Initialize frames for each timestep
+            for t in range(end_timestep + 1):  # +1 to include end_timestep
+                frames_t = []
+                
+                # Load frame t from each camera
+                for video_file in video_files:
+                    cam_id = os.path.splitext(video_file)[0]
+                    video_path = os.path.join(dynamic_dir, video_file)
+                    
+                    cap = cv2.VideoCapture(video_path)
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, t)
+                    ret, frame = cap.read()
+                    cap.release()
+                    
+                    if not ret:
+                        raise RuntimeError(f"Could not read frame {t} from {video_path}")
+                    
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frame = self.to_tensor(frame)
+                    frames_t.append(frame)
+                
+                # Stack frames from all cameras for this timestep
+                frames_sequence.append(torch.stack(frames_t))
+        
+        # Stack all timesteps: [T, num_cams, C, H, W]
+        return torch.stack(frames_sequence)
+    
+
+    def load_gt_video(self, seq_idx, end_timestep):
+        """
+        Load ground truth frames from timestep 0 up to end_timestep from videos.
+        
+        Args:
+            seq_idx: Index of the sequence to load
+            end_timestep: Last timestep to load (inclusive)
+        
+        Returns:
+            frames_sequence: Tensor of shape [T, num_cams, C, H, W] containing frames from t=0 to t=end_timestep
+        """
+        dynamic_dir = os.path.join(self.scene_dirs[seq_idx], "dynamic")
+        
+        if os.path.exists(dynamic_dir):
+            video_files = sorted([f for f in os.listdir(dynamic_dir) if f.endswith('.mp4')])
+            num_cams = len(video_files)
+            frames_per_camera = []  # List to store frames for each camera
+            
+            # First iterate over videos/cameras
+            for video_file in video_files:
+                cam_id = os.path.splitext(video_file)[0]
+                video_path = os.path.join(dynamic_dir, video_file)
+                frames_this_camera = []
+                
+                # Read all frames from this video
+                cap = cv2.VideoCapture(video_path)
+                for t in range(end_timestep + 1):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, t)
+                    ret, frame = cap.read()
+                    if not ret:
+                        cap.release()
+                        raise RuntimeError(f"Could not read frame {t} from {video_path}")
+                    
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frame = self.to_tensor(frame)
+                    frames_this_camera.append(frame)
+                
+                cap.release()
+                # Stack all frames for this camera: [T, C, H, W]
+                frames_per_camera.append(torch.stack(frames_this_camera))
+            
+            # Stack all cameras: [num_cams, T, C, H, W]
+            all_frames = torch.stack(frames_per_camera)
+            # Transpose to get [T, num_cams, C, H, W]
+            return all_frames.transpose(0, 1)
+
+        return None
+
+
+    def extend_video(self, seq_idx, last_timestep):
+        """
+        Set gt_video with all frames up to the last_timestep frame of the video for the given sequence
         """
         # TODO: Implement this
         pass
 
-    def update_frames_tensor(self, idx, timestep):
+    def update_image(self, seq_idx, timestep):
         """
         Update frames_tensor with the respective timestep frame of each video
         """
         # TODO: Implement this
-        pass
+        for seq_idx in range(len(self.scenes)):
+            self.image[seq_idx] = self.load_gt_frames(seq_idx, timestep)
+
+    def update_pseudo_3d_gt(self, seq_idx, new_xyz, new_quat):
+        """
+        Update pseudo_3d_gt with the latest 3d positions and quaternions of the given sequence
+        """
+
+        new_data = torch.cat([new_xyz, new_quat], dim=-1)  # [N, 7]
+        new_data = new_data.unsqueeze(0)  # [1, N, 7]
+        
+        self.pseudo_3d_gt[seq_idx] = torch.cat([
+            self.pseudo_3d_gt[seq_idx], # [T, N, 7]
+            new_data                    # [1, N, 7]
+        ], dim=0)                       # Result: [T+1, N, 7]
+        
 
 
 
 
 
-
-
+    def __getitem__(self, idx):
+        if self.z_h_0[idx] is not None:  # Check if features are set for this sequence
+            item = {
+                "seq_idx": idx,
+                "scene": self.scenes[idx],
+                "GM0": self.GM0[idx],                   # list with num_sequences tensors, each with shape [N, 7]
+                "GM1": self.GM1[idx],                   # list with num_sequences tensors, each with shape [N, 7]
+                "gt_image": self.image[idx],            # list with num_sequences tensors, each with shape [1, num_cams, C, H, W]
+                "gt_video": self.video[idx],            # list with num_sequences tensors, each with shape [T, num_cams, C, H, W]
+                "pseudo_3d_gt": self.pseudo_3d_gt[idx], # list with num_sequences tensors, each with shape [T, N, 7]
+                "z_h_0": self.z_h_0[idx],               # list with num_sequences tensors, each with shape [N, F]
+                "z_l_0": self.z_l_0[idx]                # list with num_sequences tensors, each with shape [N, F]
+            }
+        else:
+            item = {
+                "scene": self.scenes[idx],
+                "GM0": self.GM0[idx],                   # list with num_sequences tensors, each with shape [N, 7]
+                "GM1": self.GM1[idx],                   # list with num_sequences tensors, each with shape [N, 7]
+                "gt_image": self.image[idx],            # list with num_sequences tensors, each with shape [1, num_cams, C, H, W]
+                "gt_video": self.video[idx],            # list with num_sequences tensors, each with shape [T, num_cams, C, H, W]
+                "pseudo_3d_gt": self.pseudo_3d_gt[idx]  # list with num_sequences tensors, each with shape [T, N, 7]
+            }
+        return item
 
 
 
